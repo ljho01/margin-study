@@ -33,6 +33,16 @@ notarize() {
   fi
 }
 
+# Fetching the ticket from Apple's CDN fails now and then on CI runners.
+staple() {
+  for attempt in 1 2 3 4 5; do
+    xcrun stapler staple "$1" && return 0
+    echo "staple attempt $attempt failed; retrying"
+    sleep $((attempt * 15))
+  done
+  return 1
+}
+
 echo "==> build $version"
 APPLE_SIGNING_IDENTITY="$identity" bunx tauri build --bundles app
 app="src-tauri/target/release/bundle/macos/$name.app"
@@ -49,7 +59,7 @@ codesign --verify --deep --strict "$app"
 echo "==> notarize app"
 ditto -c -k --keepParent "$app" "$work/app.zip"
 notarize "$work/app.zip"
-xcrun stapler staple "$app"
+staple "$app"
 
 mkdir -p "$out"
 for previous in "$out"/*(N); do mv "$previous" "$work/"; done
@@ -82,7 +92,7 @@ codesign --force --timestamp --sign "$identity" "$dmg"
 
 echo "==> notarize dmg"
 notarize "$dmg"
-xcrun stapler staple "$dmg"
+staple "$dmg"
 spctl -a -t open --context context:primary-signature -vv "$dmg"
 
 ditto -c -k --keepParent "$dmg" "$dmg.zip"
