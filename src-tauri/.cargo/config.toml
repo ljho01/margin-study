@@ -1,0 +1,4 @@
+[build]
+# Spotlight skips folders ending in .noindex, so local builds of the app
+# (bundle/macos/여백.app) do not show up next to the installed one.
+target-dir = "target.noindex"

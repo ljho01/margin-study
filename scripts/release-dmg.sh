@@ -45,7 +45,7 @@ staple() {
 
 echo "==> build $version"
 APPLE_SIGNING_IDENTITY="$identity" bunx tauri build --bundles app
-app="src-tauri/target/release/bundle/macos/$name.app"
+app="src-tauri/target.noindex/release/bundle/macos/$name.app"
 
 echo "==> sign"
 for bin in "$app"/Contents/Resources/bin/*; do
