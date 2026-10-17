@@ -16,6 +16,15 @@ export const COLORS = [
   "#4d79d8",
   "#29344a",
 ];
+/** Tools that leave a mark in a color; each keeps its own. */
+export type InkTool = "highlight" | "pen" | "text";
+export const isInkTool = (tool: Tool): tool is InkTool =>
+  tool === "highlight" || tool === "pen" || tool === "text";
+export const DEFAULT_COLORS: Record<InkTool, string> = {
+  highlight: COLORS[0],
+  pen: COLORS[5],
+  text: COLORS[5],
+};
 export const TOOL_ITEMS: {
   id: Tool;
   label: string;

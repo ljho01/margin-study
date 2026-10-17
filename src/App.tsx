@@ -90,6 +90,14 @@ import { Toaster } from "@/components/ui/sonner";
 import AnnotationLayer from "@/components/AnnotationLayer";
 import StablePage from "@/components/StablePage";
 import ChatPanel from "@/components/ChatPanel";
+import { type ComposerHandle } from "@/components/ChatComposer";
+import ColorPicker from "@/components/ColorPicker";
+import SelectionBubble from "@/components/SelectionBubble";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { IconButton } from "@/components/IconButton";
 import OcrLayer from "@/components/OcrLayer";
 import PageThumbnailList from "@/components/PageThumbnailList";
@@ -97,7 +105,7 @@ import AnalysisPanel from "@/components/AnalysisPanel";
 import WorkspaceTree from "@/components/WorkspaceTree";
 import { useStudy } from "@/hooks/use-study";
 import { MAX_ZOOM, MIN_ZOOM, usePinchZoom } from "@/hooks/use-pinch-zoom";
-import { COLORS, TOOL_ITEMS } from "@/lib/viewer";
+import { COLORS, TOOL_ITEMS, isInkTool, type InkTool } from "@/lib/viewer";
 import type { Tool } from "@/lib/types";
 import * as ai from "@/lib/ai";
 import { restartApp, startAutoUpdate } from "@/lib/updater";
@@ -170,7 +178,7 @@ export default function App() {
     zoom: s.zoom,
     setZoom: s.setZoom,
   });
-  const chatInput = useRef<HTMLTextAreaElement>(null);
+  const chatInput = useRef<ComposerHandle>(null);
   const focusChat = useRef(false);
   useEffect(() => {
     if (!s.rightOpen || !focusChat.current) return;
@@ -282,9 +290,14 @@ export default function App() {
   const selectTool = (tool: Tool) => {
     setSelectedMark(null);
     s.setTool(tool);
-    if ((tool === "pen" || tool === "text") && s.color === COLORS[0])
-      s.setColor(COLORS[5]);
-    if (tool === "highlight" && s.color === COLORS[5]) s.setColor(COLORS[0]);
+  };
+  /** A color picked for a tool also recolors the selected mark of that kind. */
+  const recolor = (tool: InkTool, color: string) => {
+    const mark = annotations.find((a) => a.id === selectedMark);
+    if (mark && mark.type === tool && mark.color !== color)
+      s.changeAnnotations(
+        annotations.map((a) => (a.id === mark.id ? { ...a, color } : a)),
+      );
   };
   const pageKey =
     (callback: () => void): UseHotkeyDefinition["callback"] =>
@@ -750,70 +763,67 @@ export default function App() {
                           }
                           aria-label="필기 도구"
                         >
-                          {TOOL_ITEMS.map((item) => (
-                            <Tooltip key={item.id}>
-                              <TooltipTrigger asChild>
-                                <ToggleGroupItem
-                                  value={item.id}
-                                  aria-label={item.label}
-                                  className="text-muted-foreground hover:bg-accent hover:text-foreground aria-checked:bg-accent aria-checked:text-foreground"
-                                >
-                                  <item.icon className="size-4" />
-                                </ToggleGroupItem>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {item.id === "highlight"
-                                  ? "하이라이트 · 텍스트 선택 후 누르기"
-                                  : item.label}
-                                <span className="ml-2 text-muted-foreground">
-                                  {item.shortcut}
-                                </span>
-                              </TooltipContent>
-                            </Tooltip>
-                          ))}
+                          {TOOL_ITEMS.map((item) => {
+                            const ink = isInkTool(item.id) ? item.id : null;
+                            return (
+                              <div key={item.id} className="flex items-center">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <ToggleGroupItem
+                                      value={item.id}
+                                      aria-label={item.label}
+                                      className={
+                                        "relative text-muted-foreground hover:bg-accent hover:text-foreground aria-checked:bg-accent aria-checked:text-foreground" +
+                                        (ink ? " rounded-r-none" : "")
+                                      }
+                                    >
+                                      <item.icon className="size-4" />
+                                      {ink && (
+                                        <span
+                                          className="absolute bottom-1 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full"
+                                          style={{
+                                            backgroundColor: s.colors[ink],
+                                          }}
+                                        />
+                                      )}
+                                    </ToggleGroupItem>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {item.id === "highlight"
+                                      ? "하이라이트 · 텍스트 선택 후 누르기"
+                                      : item.label}
+                                    <span className="ml-2 text-muted-foreground">
+                                      {item.shortcut}
+                                    </span>
+                                  </TooltipContent>
+                                </Tooltip>
+                                {ink && (
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        aria-label={item.label + " 색상"}
+                                        className="h-8 w-4 rounded-l-none px-0 text-muted-foreground hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
+                                      >
+                                        <ChevronDown className="size-3" />
+                                      </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent align="start" className="w-auto p-3">
+                                      <ColorPicker
+                                        value={s.colors[ink]}
+                                        presets={COLORS}
+                                        onChange={(color) =>
+                                          s.setToolColor(ink, color)
+                                        }
+                                        onCommit={(color) => recolor(ink, color)}
+                                      />
+                                    </PopoverContent>
+                                  </Popover>
+                                )}
+                              </div>
+                            );
+                          })}
                         </ToggleGroup>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              size="icon-sm"
-                              variant="ghost"
-                              aria-label="필기 색상"
-                            >
-                              <span
-                                className="size-4 rounded-full border"
-                                style={{ backgroundColor: s.color }}
-                              />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="start">
-                            <DropdownMenuRadioGroup
-                              value={s.color}
-                              onValueChange={s.setColor}
-                            >
-                              {COLORS.map((color, index) => (
-                                <DropdownMenuRadioItem
-                                  key={color}
-                                  value={color}
-                                >
-                                  <span
-                                    className="size-3 rounded-full border"
-                                    style={{ backgroundColor: color }}
-                                  />
-                                  {
-                                    [
-                                      "노랑",
-                                      "초록",
-                                      "보라",
-                                      "분홍",
-                                      "파랑",
-                                      "검정",
-                                    ][index]
-                                  }
-                                </DropdownMenuRadioItem>
-                              ))}
-                            </DropdownMenuRadioGroup>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
                         <IconButton
                           label="되돌리기"
                           hotkey={KEYS.undo}
@@ -902,6 +912,19 @@ export default function App() {
                           defaultSize="68%"
                           minSize={120}
                         >
+                          <SelectionBubble
+                            surface={s.pageSurface}
+                            region={s.canvasRegion}
+                            colors={COLORS.slice(0, 5)}
+                            current={s.colors.highlight}
+                            onHighlight={(color) => {
+                              s.setToolColor("highlight", color);
+                              s.highlightSelection(color);
+                            }}
+                            onAttach={() => {
+                              if (s.attachSelection()) askChat();
+                            }}
+                          />
                           <div
                             ref={s.canvasRegion}
                             className="h-full overflow-auto bg-muted"
@@ -963,7 +986,7 @@ export default function App() {
                                         annotations={annotations}
                                         onChange={s.changeAnnotations}
                                         tool={s.tool}
-                                        color={s.color}
+                                        color={isInkTool(s.tool) ? s.colors[s.tool] : s.colors.pen}
                                         width={s.pageWidth}
                                         height={s.pageHeight}
                                         selected={selectedMark}

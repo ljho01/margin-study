@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, useState, type PointerEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 import type { Annotation, Point, Tool } from "@/lib/types";
 import { highlightRects, inPaintOrder } from "@/lib/pdf";
 
@@ -88,6 +94,34 @@ export default function AnnotationLayer({
     );
   }, [annotations, width, height, editor]);
 
+  // A click (no text selected) on a highlight selects it with the select
+  // tool, since highlights do not take the pointer there.
+  const pick = useRef<(event: MouseEvent) => void>(() => {});
+  pick.current = (event) => {
+    const svg = svgRef.current;
+    if (tool !== "select" || !svg) return;
+    if (svg.contains(event.target as Node)) return;
+    if (!window.getSelection()?.isCollapsed) return;
+    const r = svg.getBoundingClientRect();
+    const x = (event.clientX - r.left) / r.width;
+    const y = (event.clientY - r.top) / r.height;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return;
+    const hit = [...annotations]
+      .reverse()
+      .find(
+        (a) =>
+          a.type === "highlight" &&
+          highlightRects(a).some(
+            (q) => x >= q.x && x <= q.x + q.w && y >= q.y && y <= q.y + q.h,
+          ),
+      );
+    if (hit) onSelect(hit.id);
+  };
+  useEffect(() => {
+    const click = (event: MouseEvent) => pick.current(event);
+    document.addEventListener("click", click);
+    return () => document.removeEventListener("click", click);
+  }, []);
   const raw = (event: { clientX: number; clientY: number }): Point => {
     const r = svgRef.current!.getBoundingClientRect();
     return {
@@ -255,7 +289,12 @@ export default function AnnotationLayer({
   const render = (a: Annotation) => {
     if (editor?.id === a.id) return null;
     const moving = offset && dragRef.current?.id === a.id;
-    const hittable = interactive || (tool === "text" && a.type === "text");
+    // With the select tool a highlight lets the pointer through, so the text
+    // under it can still be selected (and highlighted or sent to the chat);
+    // a plain click on it selects it, below.
+    const hittable =
+      (interactive && !(tool === "select" && a.type === "highlight")) ||
+      (tool === "text" && a.type === "text");
     const common = {
       ref: (node: SVGGraphicsElement | null) => {
         if (node) nodes.current.set(a.id, node);

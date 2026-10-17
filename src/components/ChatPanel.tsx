@@ -17,7 +17,6 @@ import {
   X,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   DropdownMenu,
@@ -27,7 +26,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { IconButton } from "@/components/IconButton";
 import ChatMarkdown from "@/components/ChatMarkdown";
+import ChatComposer, { type ComposerHandle } from "@/components/ChatComposer";
 import { cn } from "@/lib/utils";
+import { quotesAsText, quotesOf, withoutQuotes } from "@/lib/quotes";
 import type { ChatSession } from "@/lib/types";
 import type { useStudy } from "@/hooks/use-study";
 
@@ -113,7 +114,7 @@ export default function ChatPanel({
   newChatHotkey,
 }: {
   s: ReturnType<typeof useStudy>;
-  input: RefObject<HTMLTextAreaElement | null>;
+  input: RefObject<ComposerHandle | null>;
   newChatHotkey: string;
 }) {
   const doc = s.doc!;
@@ -121,6 +122,10 @@ export default function ChatPanel({
     .map((id) => doc.sessions?.find((x) => x.id === id))
     .filter((x): x is ChatSession => !!x);
   const typed = !!s.question.trim();
+  const pageLabel = (page: number) => {
+    const index = doc.pages.indexOf(page);
+    return index < 0 ? `원본 ${page}` : String(index + 1);
+  };
   return (
     <aside className="flex h-full min-h-0 flex-col" data-chat-panel>
       <header
@@ -203,6 +208,8 @@ export default function ChatPanel({
               message.stopped &&
               !s.chatBusy &&
               index === s.messages.length - 1;
+            const quotes = message.role === "user" ? quotesOf(message.text) : [];
+            const shown = quotes.length ? withoutQuotes(message.text) : message.text;
             return (
               <div
                 key={message.id}
@@ -212,11 +219,27 @@ export default function ChatPanel({
                     : "text-sm"
                 }
               >
-                {message.text ? (
-                  <ChatMarkdown streaming={live}>{message.text}</ChatMarkdown>
+                {!!quotes.length && (
+                  // Attached passages, like files attached to a message.
+                  <ul className={cn("space-y-1", shown && "mb-2")}>
+                    {quotes.map((quote, i) => (
+                      <li
+                        key={i}
+                        className="border-l-2 pl-2 text-xs leading-5 text-muted-foreground"
+                      >
+                        <span className="mr-1.5 font-medium text-foreground tabular-nums">
+                          {pageLabel(quote.page)}쪽
+                        </span>
+                        <span className="line-clamp-3">{quote.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {shown ? (
+                  <ChatMarkdown streaming={live}>{shown}</ChatMarkdown>
                 ) : live ? (
                   <Loader2 className="size-4 animate-spin" />
-                ) : resumable ? null : (
+                ) : resumable || quotes.length ? null : (
                   <span className="text-sm text-muted-foreground">
                     답변 중단
                   </span>
@@ -256,7 +279,9 @@ export default function ChatPanel({
                 className="flex items-center gap-1 rounded-lg border bg-muted/50 py-1 pr-1 pl-2.5 text-sm"
               >
                 <CornerDownRight className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate">{item.text}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {quotesAsText(item.text)}
+                </span>
                 <IconButton
                   label="지금 보내기"
                   className="size-7"
@@ -288,24 +313,15 @@ export default function ChatPanel({
             ))}
           </ul>
         )}
-        <Textarea
+        <ChatComposer
           ref={input}
-          aria-label="현재 페이지에 질문하기"
+          label="현재 페이지에 질문하기"
           placeholder="질문 입력"
-          rows={3}
-          className="min-h-24 resize-none pb-12"
+          className="pb-12"
           value={s.question}
-          onChange={(e) => s.setQuestion(e.target.value)}
-          onKeyDown={(e) => {
-            if (
-              e.key === "Enter" &&
-              !e.shiftKey &&
-              !e.nativeEvent.isComposing
-            ) {
-              e.preventDefault();
-              void s.sendChat();
-            }
-          }}
+          onChange={s.setQuestion}
+          onSubmit={() => void s.sendChat()}
+          pageLabel={pageLabel}
         />
         {s.chatBusy && !typed ? (
           <Button

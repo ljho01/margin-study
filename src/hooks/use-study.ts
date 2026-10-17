@@ -16,11 +16,12 @@ import { pageTools } from "@/lib/page-tools";
 import { pageContext, pageImage, readPdf, writePdf } from "@/lib/pdf";
 import * as files from "@/lib/files";
 import { selectionRects } from "@/components/OcrLayer";
-import { COLORS } from "@/lib/viewer";
+import { DEFAULT_COLORS, type InkTool } from "@/lib/viewer";
 import * as chats from "@/lib/chat-sessions";
 import { NEW_CHAT_TITLE } from "@/lib/chat-sessions";
 import { carryThumbnails } from "@/lib/thumbnails";
 import { repairLatex } from "@/lib/latex";
+import { quoteToken, quotesAsText, quotesForAI } from "@/lib/quotes";
 import type {
   Account,
   Annotation,
@@ -89,7 +90,22 @@ export function useStudy() {
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [tool, setTool] = useState<Tool>("select");
-  const [color, setColor] = useState(COLORS[0]);
+  const [colors, setColors] = useState<Record<InkTool, string>>(() => {
+    try {
+      return {
+        ...DEFAULT_COLORS,
+        ...JSON.parse(localStorage.getItem("margin-colors") ?? "{}"),
+      };
+    } catch {
+      return DEFAULT_COLORS;
+    }
+  });
+  const setToolColor = (target: InkTool, value: string) =>
+    setColors((current) => {
+      const next = { ...current, [target]: value };
+      localStorage.setItem("margin-colors", JSON.stringify(next));
+      return next;
+    });
   const [zoom, setZoom] = useState(1);
   const [region, setRegion] = useState({ width: 872, height: 0 });
   const [aspect, setAspect] = useState(0.707);
@@ -504,7 +520,8 @@ export function useStudy() {
     },
     [goTo],
   );
-  const highlightSelection = () => {
+  /** Highlights the text selected on the page, in the highlighter's color. */
+  const highlightSelection = (color = colors.highlight) => {
     const surface = pageSurface.current;
     if (!surface || !doc) return false;
     const picked = selectionRects(surface);
@@ -514,13 +531,31 @@ export function useStudy() {
       {
         id: crypto.randomUUID(),
         type: "highlight",
-        color: color === COLORS[5] ? COLORS[0] : color,
+        color,
         points: [{ x: picked.rects[0].x, y: picked.rects[0].y }],
         rects: picked.rects,
         text: picked.text,
         width: 0,
       },
     ]);
+    window.getSelection()?.removeAllRanges();
+    return true;
+  };
+  /** Adds the text selected on the page to the chat input as a chip. */
+  const attachSelection = () => {
+    const surface = pageSurface.current;
+    if (!surface || !doc) return false;
+    const picked = selectionRects(surface);
+    const text = (picked?.text || window.getSelection()?.toString() || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) return false;
+    const token = quoteToken({ page: doc.currentPage, text });
+    setQuestion((current) =>
+      !current || /\s$/.test(current)
+        ? current + token + " "
+        : current + " " + token + " ",
+    );
     window.getSelection()?.removeAllRanges();
     return true;
   };
@@ -719,7 +754,7 @@ export function useStudy() {
           ...x,
           title:
             x.title === NEW_CHAT_TITLE && !x.messages.length
-              ? text.replace(/\s+/g, " ").slice(0, 40)
+              ? quotesAsText(text).slice(0, 40)
               : x.title,
           messages: [
             ...x.messages,
@@ -732,6 +767,10 @@ export function useStudy() {
     let latest = base;
     try {
       const current = snapshot.pages.indexOf(page) + 1;
+      // Attached passages go to the model as quotations with the page
+      // number the student sees.
+      const quoted = (value: string) =>
+        quotesForAI(value, (p) => snapshot.pages.indexOf(p) + 1 || undefined);
       const answer = await ai.askAI({
         id: call,
         model,
@@ -741,11 +780,12 @@ export function useStudy() {
           snapshot.pages.length,
           history.map((m) => ({
             ...m,
+            text: quoted(m.text),
             page: m.page
               ? snapshot.pages.indexOf(m.page) + 1 || undefined
               : undefined,
           })),
-          asked ? asked.text : resume ? ai.RESUME_PROMPT : text,
+          quoted(asked ? asked.text : resume ? ai.RESUME_PROMPT : text),
         ),
         onDelta: (value) => {
           latest = base + value;
@@ -1183,8 +1223,8 @@ export function useStudy() {
     exporting,
     tool,
     setTool,
-    color,
-    setColor,
+    colors,
+    setToolColor,
     zoom,
     setZoom,
     leftOpen,
@@ -1277,6 +1317,7 @@ export function useStudy() {
     saveDocument,
     pageSurface,
     highlightSelection,
+    attachSelection,
     ensureOcr,
   };
 }
