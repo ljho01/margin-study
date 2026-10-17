@@ -322,14 +322,10 @@ export default function AnnotationLayer({
       },
     };
     if (a.type === "highlight")
+      // Only the hit area lives here; the visible tint is drawn by the
+      // blended layer below.
       return (
-        <g
-          key={a.id}
-          {...common}
-          fill={a.color}
-          opacity={0.35}
-          style={{ ...common.style, mixBlendMode: "multiply" }}
-        >
+        <g key={a.id} {...common} fill="transparent">
           {highlightRects(a).map((r, i) => (
             <rect
               key={i}
@@ -415,10 +411,49 @@ export default function AnnotationLayer({
       </g>
     );
   };
+  const all = draft ? [...annotations, draft] : annotations;
   const editing = annotations.find((a) => a.id === editor?.id);
   const editorSize = editing ? editing.width * width : NEW_TEXT_SIZE;
   return (
     <>
+      {/* Highlights are a layer of their own, multiplied with the page as a
+          whole so the letters show through as on paper. Blending inside the
+          ink layer only mixed with that layer: where WebKit draws the PDF
+          canvas on its own GPU layer, the tint then covered the text. */}
+      <svg
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-10"
+        style={{ mixBlendMode: "multiply" }}
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+      >
+        {all.map(
+          (a) =>
+            a.type === "highlight" && (
+              <g
+                key={a.id}
+                fill={a.color}
+                opacity={0.35}
+                transform={
+                  offset && dragRef.current?.id === a.id
+                    ? `translate(${offset.x * width} ${offset.y * height})`
+                    : undefined
+                }
+              >
+                {highlightRects(a).map((r, i) => (
+                  <rect
+                    key={i}
+                    x={r.x * width}
+                    y={r.y * height}
+                    width={r.w * width}
+                    height={r.h * height}
+                  />
+                ))}
+              </g>
+            ),
+        )}
+      </svg>
       <svg
         ref={svgRef}
         aria-label="PDF 필기 영역"
@@ -437,9 +472,7 @@ export default function AnnotationLayer({
         }}
       >
         {/* A highlight being drawn already sits under the pen and text. */}
-        {inPaintOrder(draft ? [...annotations, draft] : annotations).map(
-          render,
-        )}
+        {inPaintOrder(all).map(render)}
         {tool === "select" && box && !editor && (
           <rect
             fill="none"

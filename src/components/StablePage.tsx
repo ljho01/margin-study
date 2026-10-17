@@ -112,6 +112,9 @@ export default function StablePage({
                 width: stale.width,
                 height: stale.height,
                 pointerEvents: "none",
+                // The transform isolates this layer; keep the highlights
+                // multiplied with the page while the previous page shows.
+                mixBlendMode: "multiply",
               }
             : { display: "contents" }
         }

@@ -6,7 +6,7 @@ import {
 } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { Button } from "@/components/ui/button";
-import { highlightRects, inPaintOrder } from "@/lib/pdf";
+import { highlightRects } from "@/lib/pdf";
 import { cachedThumbnail, renderThumbnail } from "@/lib/thumbnails";
 import type { Annotation } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -25,73 +25,74 @@ function Marks({
   width: number;
   height: number;
 }) {
+  const highlights = annotations.filter((a) => a.type === "highlight");
+  const ink = annotations.filter((a) => a.type !== "highlight");
+  // size-full also keeps Button's default icon size (size-4) off them.
+  const layer = "pointer-events-none absolute inset-0 size-full";
   return (
-    <svg
-      aria-hidden
-      // size-full also keeps Button's default icon size (size-4) off it.
-      className="pointer-events-none absolute inset-0 size-full"
-      width={width}
-      height={height}
-      viewBox={`0 0 ${width} ${height}`}
-    >
-      {inPaintOrder(annotations).map((a) => {
-        if (a.type === "highlight")
-          return (
-            <g
-              key={a.id}
-              fill={a.color}
-              opacity={0.35}
-              style={{ mixBlendMode: "multiply" }}
-            >
-              {highlightRects(a).map((r, i) => (
-                <rect
-                  key={i}
-                  x={r.x * width}
-                  y={r.y * height}
-                  width={r.w * width}
-                  height={r.h * height}
-                />
-              ))}
-            </g>
-          );
-        if (a.type === "pen")
-          return (
-            <polyline
-              key={a.id}
-              points={a.points
-                .map((p) => `${p.x * width},${p.y * height}`)
-                .join(" ")}
-              stroke={a.color}
-              strokeWidth={Math.max(0.5, a.width * width)}
-              fill="none"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          );
-        const [p] = a.points;
-        return (
-          <text
-            key={a.id}
-            x={p.x * width}
-            y={p.y * height}
-            fill={a.color}
-            fontSize={a.width * width}
-            dominantBaseline="text-before-edge"
-          >
-            {a.text?.split("\n").map((line, i) => (
-              <tspan
+    <>
+      {/* Multiplied with the page as a whole, like the reader's layer. */}
+      <svg
+        aria-hidden
+        className={layer}
+        style={{ mixBlendMode: "multiply" }}
+        viewBox={`0 0 ${width} ${height}`}
+      >
+        {highlights.map((a) => (
+          <g key={a.id} fill={a.color} opacity={0.35}>
+            {highlightRects(a).map((r, i) => (
+              <rect
                 key={i}
-                x={p.x * width}
-                dy={i ? "1.5em" : 0}
-                dominantBaseline="text-before-edge"
-              >
-                {line}
-              </tspan>
+                x={r.x * width}
+                y={r.y * height}
+                width={r.w * width}
+                height={r.h * height}
+              />
             ))}
-          </text>
-        );
-      })}
-    </svg>
+          </g>
+        ))}
+      </svg>
+      <svg aria-hidden className={layer} viewBox={`0 0 ${width} ${height}`}>
+        {ink.map((a) => {
+          if (a.type === "pen")
+            return (
+              <polyline
+                key={a.id}
+                points={a.points
+                  .map((p) => `${p.x * width},${p.y * height}`)
+                  .join(" ")}
+                stroke={a.color}
+                strokeWidth={Math.max(0.5, a.width * width)}
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            );
+          const [p] = a.points;
+          return (
+            <text
+              key={a.id}
+              x={p.x * width}
+              y={p.y * height}
+              fill={a.color}
+              fontSize={a.width * width}
+              dominantBaseline="text-before-edge"
+            >
+              {a.text?.split("\n").map((line, i) => (
+                <tspan
+                  key={i}
+                  x={p.x * width}
+                  dy={i ? "1.5em" : 0}
+                  dominantBaseline="text-before-edge"
+                >
+                  {line}
+                </tspan>
+              ))}
+            </text>
+          );
+        })}
+      </svg>
+    </>
   );
 }
 
