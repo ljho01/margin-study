@@ -2,6 +2,7 @@ import katex from "katex";
 import type { MarkdownExtension } from "@tanstack/markdown";
 import { Markdown, type MarkdownComponents } from "@tanstack/markdown/react";
 import { streamingMarkdownExtension } from "@tanstack/markdown/extensions/streaming";
+import { normalizeMath } from "@/lib/math";
 
 const tex = (value: string, displayMode: boolean) =>
   katex.renderToString(value, { displayMode, throwOnError: false });
@@ -156,7 +157,7 @@ export default function ChatMarkdown({
         components={components}
         extensions={streaming ? STREAMING : STATIC}
       >
-        {children}
+        {normalizeMath(children)}
       </Markdown>
     </div>
   );
