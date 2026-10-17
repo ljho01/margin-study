@@ -6,6 +6,7 @@ import PdfThumbnail, {
   THUMB_WIDTH,
 } from "@/components/PdfThumbnail";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { Annotation } from "@/lib/types";
 
 const GAP = 8;
 
@@ -25,6 +26,7 @@ export default function PageThumbnailList({
   order,
   current,
   selected,
+  annotations,
   onPick,
 }: {
   /** Identifies the document whose scroll position is kept. */
@@ -37,10 +39,15 @@ export default function PageThumbnailList({
   current: number;
   /** Pages picked with Cmd/Shift-click; empty when only the current page is. */
   selected: number[];
+  /** The reader's marks by page, shown over each thumbnail. */
+  annotations: Record<number, Annotation[]>;
   onPick: (page: number, event: MouseEvent) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const remembered = useRef(memory.get(memoryKey)).current;
+  // Saving gives the document a new id while this list stays mounted.
+  const key = useRef(memoryKey);
+  key.current = memoryKey;
   // The remembered ratio gives the restored offset the same row height.
   const [ratio, setRatio] = useState(remembered?.ratio ?? 4 / 3);
   useEffect(() => {
@@ -74,14 +81,24 @@ export default function PageThumbnailList({
     paddingEnd: GAP,
     initialOffset: remembered?.offset ?? 0,
     onChange: (instance) => {
-      const saved = memory.get(memoryKey);
-      memory.set(memoryKey, {
+      const saved = memory.get(key.current);
+      memory.set(key.current, {
         offset: instance.scrollOffset ?? 0,
         ratio,
         current: saved?.current ?? current,
       });
     },
   });
+  useEffect(() => {
+    if (!memory.has(memoryKey))
+      memory.set(memoryKey, {
+        offset: virtualizer.scrollOffset ?? 0,
+        ratio,
+        current,
+      });
+    // Only when the document id changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memoryKey]);
   useEffect(() => virtualizer.measure(), [row, virtualizer]);
   // Keep the page being read in view when it changes from the keyboard or
   // reader, and again once the real page ratio has set the row height. A
@@ -133,6 +150,7 @@ export default function PageThumbnailList({
                 page={page}
                 index={order.indexOf(page)}
                 height={thumb}
+                annotations={annotations[page]}
                 active={page === current}
                 selected={
                   selected.length ? selected.includes(page) : page === current

@@ -19,6 +19,7 @@ import { selectionRects } from "@/components/OcrLayer";
 import { COLORS } from "@/lib/viewer";
 import * as chats from "@/lib/chat-sessions";
 import { NEW_CHAT_TITLE } from "@/lib/chat-sessions";
+import { carryThumbnails } from "@/lib/thumbnails";
 import type {
   Account,
   Annotation,
@@ -130,6 +131,9 @@ export function useStudy() {
   const chatStopped = useRef(false);
   const opening = useRef(false);
   const loadingTask = useRef<PDFDocumentLoadingTask | null>(null);
+  // Saving re-reads the file under a new id; views of the document (the page
+  // list) keep the key they were opened with so they are not rebuilt.
+  const viewKeys = useRef(new Map<string, string>());
   const pageSurface = useRef<HTMLDivElement>(null);
   const ocrRunning = useRef(new Set<string>());
   const notify = useCallback((text: string, error = false) => {
@@ -872,6 +876,15 @@ export function useStudy() {
     };
     const file = await readPdf(buffer);
     const { task, parsed } = await loadDisplay(file.display);
+    // The saved file shows the same pages, so their thumbnails carry over and
+    // the page list switches files without redrawing.
+    if (pdf)
+      carryThumbnails(
+        pdf,
+        parsed,
+        new Map(current.pages.map((page, index) => [index + 1, page])),
+      );
+    viewKeys.current.set(id, viewKeys.current.get(current.id) ?? current.id);
     await saveChain.current;
     await storage.saveDocument(next);
     await storage.storePDF(id, buffer);
@@ -1143,6 +1156,7 @@ export function useStudy() {
 
   return {
     doc,
+    viewKey: doc ? (viewKeys.current.get(doc.id) ?? doc.id) : null,
     bytes,
     pdf,
     setPdf,

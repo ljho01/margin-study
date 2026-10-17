@@ -22,7 +22,6 @@ import {
   PanelRight,
   Save,
   Settings2,
-  Square,
   Sun,
   Undo2,
   ZoomIn,
@@ -85,7 +84,6 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Toaster } from "@/components/ui/sonner";
@@ -95,7 +93,7 @@ import ChatPanel from "@/components/ChatPanel";
 import { IconButton } from "@/components/IconButton";
 import OcrLayer from "@/components/OcrLayer";
 import PageThumbnailList from "@/components/PageThumbnailList";
-import Markdown from "@/components/Markdown";
+import AnalysisPanel from "@/components/AnalysisPanel";
 import WorkspaceTree from "@/components/WorkspaceTree";
 import { useStudy } from "@/hooks/use-study";
 import { MAX_ZOOM, MIN_ZOOM, usePinchZoom } from "@/hooks/use-pinch-zoom";
@@ -677,13 +675,14 @@ export default function App() {
                                   </form>
                                 </div>
                                 <PageThumbnailList
-                                  key={doc.id}
+                                  key={s.viewKey ?? doc.id}
                                   memoryKey={doc.id}
                                   pdf={pdf}
                                   pages={s.searchResults ?? doc.pages}
                                   order={doc.pages}
                                   current={doc.currentPage}
                                   selected={s.selected}
+                                  annotations={doc.annotations}
                                   onPick={(page, event) => {
                                     // Cmd-click toggles and Shift-click
                                     // extends a selection, as in Preview;
@@ -993,146 +992,7 @@ export default function App() {
                               defaultSize="32%"
                               minSize={100}
                             >
-                              <Tabs
-                                value={s.tab}
-                                onValueChange={s.setTab}
-                                className="relative flex h-full flex-col gap-0"
-                              >
-                                <div className="absolute top-2 right-3 z-10 flex items-center gap-2 rounded-lg border bg-background/95 p-1 shadow-sm backdrop-blur">
-                                  <TabsList>
-                                    <TabsTrigger value="explanation">
-                                      해설
-                                    </TabsTrigger>
-                                    <TabsTrigger value="translation">
-                                      번역
-                                    </TabsTrigger>
-                                    <TabsTrigger value="points">
-                                      핵심
-                                    </TabsTrigger>
-                                  </TabsList>
-                                  {processing ? (
-                                    <div className="flex items-center gap-2">
-                                      <Progress
-                                        value={
-                                          (processing.done / processing.total) *
-                                          100
-                                        }
-                                        className="w-20"
-                                      />
-                                      <span className="text-xs tabular-nums">
-                                        {processing.done}/{processing.total}
-                                      </span>
-                                      <IconButton
-                                        label="처리 중지"
-                                        onClick={() => void s.stopProcessing()}
-                                      >
-                                        <Square />
-                                      </IconButton>
-                                    </div>
-                                  ) : (
-                                    <DropdownMenu>
-                                      <DropdownMenuTrigger asChild>
-                                        <Button
-                                          size="sm"
-                                          variant="outline"
-                                          disabled={s.chatBusy}
-                                        >
-                                          처리
-                                          <ChevronDown />
-                                        </Button>
-                                      </DropdownMenuTrigger>
-                                      <DropdownMenuContent align="end">
-                                        <DropdownMenuItem
-                                          onSelect={() =>
-                                            void s.runAnalysis(false, true)
-                                          }
-                                        >
-                                          현재 페이지
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem
-                                          disabled={
-                                            s.doneCount === doc.pages.length
-                                          }
-                                          onSelect={() =>
-                                            void s.runAnalysis(true)
-                                          }
-                                        >
-                                          문서 전체
-                                        </DropdownMenuItem>
-                                      </DropdownMenuContent>
-                                    </DropdownMenu>
-                                  )}
-                                </div>
-                                <ScrollArea className="min-h-0 flex-1">
-                                  <div className="p-4">
-                                    {analysis && (
-                                      <>
-                                        <TabsContent
-                                          value="explanation"
-                                          className="mt-0"
-                                        >
-                                          <h2 className="mb-4 pr-72 text-base font-semibold">
-                                            {analysis.title}
-                                          </h2>
-                                          <Markdown>
-                                            {analysis.explanation}
-                                          </Markdown>
-                                        </TabsContent>
-                                        <TabsContent
-                                          value="translation"
-                                          className="mt-0"
-                                        >
-                                          {analysis.translation ? (
-                                            <Markdown>
-                                              {analysis.translation}
-                                            </Markdown>
-                                          ) : (
-                                            !analysis.translationRequested && (
-                                              <Button
-                                                variant="outline"
-                                                size="sm"
-                                                disabled={busy}
-                                                onClick={() => {
-                                                  s.setTranslate(true);
-                                                  void s.runAnalysis(
-                                                    false,
-                                                    true,
-                                                    true,
-                                                  );
-                                                }}
-                                              >
-                                                번역 처리
-                                              </Button>
-                                            )
-                                          )}
-                                        </TabsContent>
-                                        <TabsContent
-                                          value="points"
-                                          className="mt-0"
-                                        >
-                                          <ul className="list-disc space-y-3 pl-5">
-                                            {analysis.keyPoints.map(
-                                              (point, index) => (
-                                                <li key={index}>
-                                                  <Markdown>{point}</Markdown>
-                                                </li>
-                                              ),
-                                            )}
-                                          </ul>
-                                        </TabsContent>
-                                      </>
-                                    )}
-                                    {s.processingError && (
-                                      <p
-                                        className="text-sm text-destructive"
-                                        role="alert"
-                                      >
-                                        {s.processingError}
-                                      </p>
-                                    )}
-                                  </div>
-                                </ScrollArea>
-                              </Tabs>
+                              <AnalysisPanel s={s} />
                             </ResizablePanel>
                           </>
                         )}
