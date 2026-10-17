@@ -29,3 +29,9 @@ block2 = "0.6"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSView", "NSWindow", "NSResponder", "NSButton", "NSControl"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSNotification", "NSString", "NSOperation", "NSGeometry", "NSRunLoop", "NSFileManager", "NSURL", "NSError"] }
+
+# Proc-macro and build-script dylibs stripped by the release profile fail to
+# load on current macOS ("mis-aligned LINKEDIT string pool"). Only these build
+# tools stay unstripped; the shipped binary is still stripped.
+[profile.release.build-override]
+strip = false
