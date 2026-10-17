@@ -3,6 +3,7 @@ import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import { repairLatex } from "@/lib/latex";
 export default function Markdown({ children }: { children: string }) {
   return (
     <div className="min-w-0 space-y-3 break-words text-sm leading-7 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden">
@@ -64,7 +65,7 @@ export default function Markdown({ children }: { children: string }) {
           img: () => null,
         }}
       >
-        {children}
+        {repairLatex(children)}
       </ReactMarkdown>
     </div>
   );

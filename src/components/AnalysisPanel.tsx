@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/select";
 import { IconButton } from "@/components/IconButton";
 import Markdown from "@/components/Markdown";
-import { Square } from "@/components/icons";
+import { RefreshCw, Square } from "@/components/icons";
 import type { useStudy } from "@/hooks/use-study";
 
 type Study = ReturnType<typeof useStudy>;
@@ -173,6 +173,16 @@ export default function AnalysisPanel({ s }: { s: Study }) {
               {s.processingError}
             </p>
           )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-4 -ml-2 text-muted-foreground"
+            disabled={s.chatBusy || !!processing}
+            onClick={() => void s.runAnalysis(false, true)}
+          >
+            <RefreshCw />
+            이 페이지 다시 처리
+          </Button>
         </div>
       </ScrollArea>
     );

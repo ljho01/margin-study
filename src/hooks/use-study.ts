@@ -20,6 +20,7 @@ import { COLORS } from "@/lib/viewer";
 import * as chats from "@/lib/chat-sessions";
 import { NEW_CHAT_TITLE } from "@/lib/chat-sessions";
 import { carryThumbnails } from "@/lib/thumbnails";
+import { repairLatex } from "@/lib/latex";
 import type {
   Account,
   Annotation,
@@ -620,6 +621,10 @@ export function useStudy() {
           );
         const value: PageAnalysis = {
           ...result,
+          title: repairLatex(result.title),
+          explanation: repairLatex(result.explanation),
+          translation: repairLatex(result.translation),
+          keyPoints: result.keyPoints.map(repairLatex),
           translationRequested: withTranslation,
           model,
           createdAt: new Date().toISOString(),
