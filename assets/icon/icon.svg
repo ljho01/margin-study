@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="frame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ececf1"/>
+    </linearGradient>
+    <clipPath id="paper"><rect x="170" y="170" width="684" height="684" rx="116"/></clipPath>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="70"/></filter>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#1b2140" flood-opacity="0.2"/>
+    </filter>
+    <filter id="pencilShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="-6" dy="22" stdDeviation="18" flood-color="#141a33" flood-opacity="0.35"/>
+    </filter>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3a42"/>
+      <stop offset="0.35" stop-color="#1f1f25"/>
+      <stop offset="1" stop-color="#0d0d11"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f5f8"/>
+      <stop offset="0.5" stop-color="#b9bcc6"/>
+      <stop offset="1" stop-color="#7d808c"/>
+    </linearGradient>
+    <linearGradient id="wood" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7dfba"/>
+      <stop offset="1" stop-color="#d9b07a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Everything is scaled up from Apple's 824px grid so the icon fills more of the canvas. -->
+  <g id="artwork" transform="translate(512 512) scale(1.13) translate(-512 -512)">
+  <!-- Frame -->
+  <g id="frame-layer" filter="url(#shadow)">
+    <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#frame)"/>
+  </g>
+
+  <!-- Gradient paper -->
+  <g id="paper-layer" clip-path="url(#paper)">
+    <rect x="170" y="170" width="684" height="684" fill="#cfe3ff"/>
+    <g filter="url(#soft)">
+      <circle cx="250" cy="250" r="260" fill="#3d7bff"/>
+      <circle cx="560" cy="300" r="200" fill="#8fd3ff"/>
+      <circle cx="800" cy="420" r="240" fill="#ff86c8"/>
+      <circle cx="300" cy="760" r="230" fill="#ffd56b"/>
+      <circle cx="620" cy="720" r="220" fill="#c9a8ff"/>
+    </g>
+    <rect x="170" y="170" width="684" height="684" fill="url(#gloss)"/>
+  </g>
+  <rect x="170.5" y="170.5" width="683" height="683" rx="115.5" fill="none" stroke="#ffffff" stroke-opacity="0.6"/>
+
+  <!-- Pencil: drawn horizontally with the tip at the left, rotated so the tip points down-left -->
+  <g id="pencil-layer" filter="url(#pencilShadow)" transform="translate(748 702) rotate(-45)">
+    <!-- eraser end -->
+    <rect x="148" y="-58" width="96" height="116" rx="40" fill="url(#body)"/>
+    <!-- ferrule -->
+    <rect x="120" y="-60" width="58" height="120" fill="url(#metal)"/>
+    <rect x="132" y="-60" width="4" height="120" fill="#ffffff" opacity="0.5"/>
+    <rect x="154" y="-60" width="4" height="120" fill="#5f6270" opacity="0.5"/>
+    <!-- body -->
+    <rect x="-130" y="-58" width="252" height="116" fill="url(#body)"/>
+    <rect x="-130" y="-46" width="252" height="10" fill="#ffffff" opacity="0.14"/>
+    <!-- wood cone -->
+    <path d="M -130 -58 L -232 0 L -130 58 Z" fill="url(#wood)"/>
+    <!-- graphite tip -->
+    <path d="M -196 -20 L -232 0 L -196 20 Z" fill="#1a1a1f"/>
+  </g>
+  </g>
+</svg>

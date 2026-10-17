@@ -1,0 +1,64 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "여백",
+  "version": "0.1.0",
+  "identifier": "com.jaeho.margin-study",
+  "build": {
+    "beforeDevCommand": "bun run scripts/prepare-ocr.ts && bun run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "bun run scripts/prepare-ocr.ts && bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "여백 — PDF 스터디",
+        "width": 1500,
+        "height": 980,
+        "minWidth": 940,
+        "minHeight": 680,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 15,
+          "y": 24
+        }
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost blob: data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "resources": {
+      "binaries/codex": "bin/codex",
+      "binaries/codex-code-mode-host": "bin/codex-code-mode-host",
+      "binaries/margin-ocr": "bin/margin-ocr"
+    },
+    "category": "Education",
+    "shortDescription": "PDF 학습 도구",
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFFRjlDREI0QTZBOTQzREEKUldUYVE2bW10TTM1cnRTOEV2a0lmcnBlNzVTeXR6Qm41RHNocXBMTm1ObytsM1AzZWlLSjF2ZGUK",
+      "endpoints": [
+        "https://github.com/ljho01/margin-study/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

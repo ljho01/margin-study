@@ -1,0 +1,17 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/binaries/
+output/
+*.log
+.DS_Store
+tsconfig.tsbuildinfo
+# Copied from pdfjs-dist by `bun install` (scripts/prepare-pdf.ts).
+public/cmaps/
+public/standard_fonts/
+public/wasm/
+# Signing material never belongs in the repository.
+*.p8
+*.p12
+*.key
+*.pem

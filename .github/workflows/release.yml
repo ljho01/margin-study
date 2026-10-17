@@ -1,0 +1,107 @@
+name: Release
+
+# Every push to main (and a manual run) ships a signed, notarized build that
+# installed copies pick up through the updater's latest.json.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "LICENSE"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # GitHub's macOS 15 runners are Apple silicon; only an arm64 build ships.
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      CODEX_RELEASE: rust-v0.163.0
+      MARGIN_SIGNING_IDENTITY: "Developer ID Application: Arky Korea Inc. (WZ3H5LP87N)"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from the KST date and time
+        # YYYY.MDD.HMM, e.g. 2026.1017.1653 or 2026.905.930: valid semver
+        # (no leading zeros) that always increases.
+        run: |
+          version=$(TZ=Asia/Seoul date '+%Y %m %d %H %M' | awk '{printf "%d.%d.%d", $1, $2 * 100 + $3, $4 * 100 + $5}')
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          node -e '
+            const fs = require("fs");
+            const file = "src-tauri/tauri.conf.json";
+            const config = JSON.parse(fs.readFileSync(file, "utf8"));
+            config.version = process.argv[1];
+            fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
+          ' "$version"
+          echo "Version $version"
+
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: bun install --frozen-lockfile
+
+      - name: Codex runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dir="$RUNNER_TEMP/codex"
+          mkdir -p "$dir"
+          gh release download "$CODEX_RELEASE" -R openai/codex -D "$dir" \
+            -p codex-aarch64-apple-darwin.tar.gz \
+            -p codex-code-mode-host-aarch64-apple-darwin.tar.gz
+          for archive in "$dir"/*.tar.gz; do tar -xzf "$archive" -C "$dir"; done
+          MARGIN_CODEX_BINARY="$dir/codex-aarch64-apple-darwin" \
+          MARGIN_CODE_MODE_HOST="$dir/codex-code-mode-host-aarch64-apple-darwin" \
+            bun run scripts/prepare-codex.ts
+          src-tauri/binaries/codex --version
+
+      - name: Signing keychain
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 24)
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -f pkcs12 -k "$keychain" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+          security find-identity -v -p codesigning "$keychain"
+
+      - name: Build, sign and notarize
+        env:
+          NOTARY_KEY: ${{ secrets.APPLE_API_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
+          UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+          RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/v${{ env.VERSION }}
+        run: |
+          export NOTARY_KEY_PATH="$RUNNER_TEMP/notary.p8"
+          printf '%s' "$NOTARY_KEY" > "$NOTARY_KEY_PATH"
+          scripts/release-dmg.sh
+          rm "$NOTARY_KEY_PATH"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" \
+            output/release/*.dmg \
+            output/release/*.app.tar.gz \
+            output/release/latest.json \
+            --title "여백 $VERSION" \
+            --generate-notes
