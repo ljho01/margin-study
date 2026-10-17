@@ -115,6 +115,7 @@ export default function ChatComposer({
   value,
   onChange,
   onSubmit,
+  onArrowUp,
   pageLabel,
   label,
   placeholder,
@@ -125,13 +126,15 @@ export default function ChatComposer({
   onChange: (value: string) => void;
   /** Enter without Shift; Shift+Enter starts a new line. */
   onSubmit: () => void;
+  /** Up with the cursor at the very start; true when it was handled. */
+  onArrowUp?: () => boolean;
   pageLabel: (page: number) => string;
   label: string;
   placeholder: string;
   className?: string;
 }) {
-  const latest = useRef({ onChange, onSubmit });
-  latest.current = { onChange, onSubmit };
+  const latest = useRef({ onChange, onSubmit, onArrowUp });
+  latest.current = { onChange, onSubmit, onArrowUp };
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -162,6 +165,12 @@ export default function ChatComposer({
               if (editor.view.composing) return false;
               latest.current.onSubmit();
               return true;
+            },
+            ArrowUp: ({ editor }) => {
+              const { empty, from } = editor.state.selection;
+              // Only at the very start, where Up has nowhere else to go.
+              if (editor.view.composing || !empty || from > 1) return false;
+              return latest.current.onArrowUp?.() ?? false;
             },
           };
         },

@@ -152,7 +152,7 @@ export default function ChatPanel({
                 session={session}
                 index={index}
                 active={session.id === doc.activeChat}
-                streaming={session.id === s.streamingChat}
+                streaming={s.streamingChats.includes(session.id)}
                 onActivate={() => s.openChat(session.id)}
                 onClose={() => s.closeChat(session.id)}
               />
@@ -203,7 +203,7 @@ export default function ChatPanel({
       <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
         <div className="min-w-0 space-y-6 p-4">
           {s.messages.map((message, index) => {
-            const live = s.chatBusy && message.id === s.chatRequest.current;
+            const live = message.id === s.liveAnswer;
             const resumable =
               message.stopped &&
               !s.chatBusy &&
@@ -292,6 +292,7 @@ export default function ChatPanel({
                 </IconButton>
                 <IconButton
                   label="수정"
+                  hotkey="ArrowUp"
                   className="size-7"
                   type="button"
                   onClick={() => {
@@ -321,6 +322,13 @@ export default function ChatPanel({
           value={s.question}
           onChange={s.setQuestion}
           onSubmit={() => void s.sendChat()}
+          onArrowUp={() => {
+            // Like Codex: Up pulls the last waiting question back in to edit.
+            const last = s.queue.at(-1);
+            if (!last) return false;
+            s.editQueued(last.id);
+            return true;
+          }}
           pageLabel={pageLabel}
         />
         {s.chatBusy && !typed ? (
@@ -339,7 +347,7 @@ export default function ChatPanel({
             size="icon-sm"
             type="button"
             aria-label="대기열 재개"
-            onClick={() => s.setQueuePaused(false)}
+            onClick={s.resumeQueue}
           >
             <Play />
           </Button>
@@ -348,7 +356,7 @@ export default function ChatPanel({
             className="absolute right-2 bottom-2"
             size="icon-sm"
             type="submit"
-            aria-label={s.busy ? "대기열에 추가" : "질문 보내기"}
+            aria-label={s.chatBusy ? "대기열에 추가" : "질문 보내기"}
             disabled={!typed}
           >
             <ArrowUp />

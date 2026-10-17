@@ -126,12 +126,14 @@ export function useStudy() {
     page: number;
   } | null>(null);
   const [processingError, setProcessingError] = useState("");
-  const [chatBusy, setChatBusy] = useState(false);
-  /** Questions sent while an answer is running, in send order. */
+  /** Chats answering right now: session id → id of the answer being written. */
+  const [running, setRunning] = useState<Record<string, string>>({});
+  /** Questions sent while their chat is answering, in send order. */
   const [queue, setQueue] = useState<
     { id: string; text: string; docId: string; sessionId: string }[]
   >([]);
-  const [queuePaused, setQueuePaused] = useState(false);
+  /** Chats whose waiting questions are held after a stop. */
+  const [paused, setPaused] = useState<string[]>([]);
   const [question, setQuestion] = useState("");
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<number[] | null>(null);
@@ -142,15 +144,28 @@ export function useStudy() {
   const saveChain = useRef(Promise.resolve());
   const processStop = useRef(false);
   const processRequest = useRef<string | null>(null);
-  const chatRequest = useRef<string | null>(null);
-  /** Backend request of the running answer; each run gets a new one. */
-  const chatCall = useRef<string | null>(null);
-  const chatStopped = useRef(false);
+  /** Chats that started answering, updated at once (state lags a render). */
+  const answering = useRef(new Set<string>());
+  /** Backend request of each running answer; each run gets a new one. */
+  const chatCalls = useRef(new Map<string, string>());
+  /** Chats whose answer was stopped by the student. */
+  const chatStopped = useRef(new Set<string>());
   const opening = useRef(false);
   const loadingTask = useRef<PDFDocumentLoadingTask | null>(null);
   // Saving re-reads the file under a new id; views of the document (the page
   // list) keep the key they were opened with so they are not rebuilt.
   const viewKeys = useRef(new Map<string, string>());
+  /**
+   * A saved file continues the document it was saved from (new id -> old id)
+   * when its pages kept their numbers, so answers and page processing that
+   * were running keep writing into it.
+   */
+  const continued = useRef(new Map<string, string>());
+  const sameDoc = (d: StudyDocument, id: string) => {
+    for (let at: string | undefined = d.id; at; at = continued.current.get(at))
+      if (at === id) return true;
+    return false;
+  };
   const pageSurface = useRef<HTMLDivElement>(null);
   const ocrRunning = useRef(new Set<string>());
   const notify = useCallback((text: string, error = false) => {
@@ -270,7 +285,7 @@ export function useStudy() {
       top: viewport.scrollHeight,
       behavior: switched ? "instant" : "smooth",
     });
-  }, [chatSession?.messages.length, chatBusy, doc?.id, doc?.activeChat]);
+  }, [chatSession?.messages.length, running, doc?.id, doc?.activeChat]);
   const update = useCallback(
     (fn: (d: StudyDocument) => StudyDocument) =>
       setDoc((current) =>
@@ -307,7 +322,12 @@ export function useStudy() {
   );
   const pageWidth = Math.floor(fitWidth * zoom);
   const pageHeight = Math.floor(pageWidth / aspect);
-  const busy = !!processing || chatBusy;
+  // Opening or saving another file waits for every running request; page
+  // processing and chats run alongside each other, and each chat answers one
+  // question at a time.
+  const busy = !!processing || Object.keys(running).length > 0;
+  const chatBusy = !!doc?.activeChat && !!running[doc.activeChat];
+  const queuePaused = !!doc?.activeChat && paused.includes(doc.activeChat);
   const loadDisplay = async (display: ArrayBuffer) => {
     const task = pdfjs.getDocument({
       ...PDF_OPTIONS,
@@ -332,6 +352,8 @@ export function useStudy() {
     task: PDFDocumentLoadingTask,
     parsed: PDFDocumentProxy,
     pageAspect: number,
+    /** A save of the same document: waiting questions stay. */
+    keepChats = false,
   ) => {
     // Release the previous document after React has switched to the new one.
     const previous = loadingTask.current;
@@ -344,8 +366,10 @@ export function useStudy() {
     setAspect(pageAspect);
     setDoc(chats.withSessions(next));
     setHistory([]);
-    setQueue([]);
-    setQueuePaused(false);
+    if (!keepChats) {
+      setQueue([]);
+      setPaused([]);
+    }
   };
   const aspectOf = async (parsed: PDFDocumentProxy, page: number) => {
     try {
@@ -365,11 +389,7 @@ export function useStudy() {
     update((d) => chats.moveChat(d, id, to));
   const chatHistory = doc ? chats.chatHistory(doc) : [];
   // Session whose answer is currently streaming.
-  const streamingChat = chatBusy
-    ? doc?.sessions?.find((x) =>
-        x.messages.some((m) => m.id === chatRequest.current),
-      )?.id
-    : undefined;
+  const streamingChats = Object.keys(running);
   const openBytes = async (
     buffer: ArrayBuffer,
     name: string,
@@ -596,7 +616,7 @@ export function useStudy() {
     force = false,
     withTranslation = translate,
   ) => {
-    if (!doc || !pdf || busy || !requireAI()) return;
+    if (!doc || !pdf || processing || !requireAI()) return;
     const snapshot = doc,
       proxy = pdf;
     const pages = all
@@ -665,7 +685,7 @@ export function useStudy() {
           createdAt: new Date().toISOString(),
         };
         update((d) =>
-          d.id === snapshot.id
+          sameDoc(d, snapshot.id)
             ? { ...d, analyses: { ...d.analyses, [page]: value } }
             : d,
         );
@@ -700,7 +720,8 @@ export function useStudy() {
     text: string,
     resume?: ChatMessage,
   ) => {
-    if (!doc || !pdf || chatBusy || !!processing || !requireAI()) return;
+    if (!doc || !pdf || answering.current.has(sessionId) || !requireAI())
+      return;
     const snapshot = doc;
     const session = doc.sessions?.find((x) => x.id === sessionId);
     if (!session) return;
@@ -724,17 +745,17 @@ export function useStudy() {
       d: StudyDocument,
       fn: (x: ChatSession) => ChatSession,
     ): StudyDocument =>
-      d.id === snapshot.id
+      sameDoc(d, snapshot.id)
         ? {
             ...d,
             sessions: d.sessions?.map((x) => (x.id === sessionId ? fn(x) : x)),
           }
         : d;
-    setChatBusy(true);
-    chatRequest.current = id;
+    answering.current.add(sessionId);
+    setRunning((r) => ({ ...r, [sessionId]: id }));
     const call = crypto.randomUUID();
-    chatCall.current = call;
-    chatStopped.current = false;
+    chatCalls.current.set(sessionId, call);
+    chatStopped.current.delete(sessionId);
     const patch = (value: string, extra: Partial<ChatMessage> = {}) =>
       update((d) =>
         editSession(d, (x) => ({
@@ -795,15 +816,20 @@ export function useStudy() {
       });
       patch(base + answer);
     } catch (e) {
-      if (chatStopped.current || resume) {
+      const stopped = chatStopped.current.has(sessionId);
+      if (stopped || resume) {
         // Keep what was written so far; it can be continued later.
-        if (!chatStopped.current) notify(err(e), true);
+        if (!stopped) notify(err(e), true);
         patch(latest, { stopped: true });
       } else patch(err(e), { error: true });
     } finally {
-      setChatBusy(false);
-      chatRequest.current = null;
-      chatCall.current = null;
+      answering.current.delete(sessionId);
+      chatCalls.current.delete(sessionId);
+      setRunning((r) => {
+        const next = { ...r };
+        delete next[sessionId];
+        return next;
+      });
     }
   };
   /** Sends now, or queues the question while another answer is running. */
@@ -813,7 +839,9 @@ export function useStudy() {
     // Keep the typed question when the account still needs to be connected.
     if (!requireAI()) return;
     setQuestion("");
-    if (chatBusy || processing) {
+    // Waits only for this chat's own answer; other chats and page
+    // processing run alongside.
+    if (answering.current.has(doc.activeChat)) {
       setQueue((items) => [
         ...items,
         {
@@ -827,30 +855,35 @@ export function useStudy() {
     }
     void runChat(doc.activeChat, text);
   };
-  /** Stops the running answer; queued questions wait until resumed. */
-  const stopChat = (pauseQueue = true) => {
-    const id = chatCall.current;
-    if (!id) return;
-    chatStopped.current = true;
-    if (pauseQueue) setQueuePaused(true);
-    void ai.cancelAI(id).catch((e) => notify(err(e), true));
+  /** Stops a chat's answer; its queued questions wait until resumed. */
+  const stopChat = (sessionId = doc?.activeChat, pauseQueue = true) => {
+    const call = sessionId && chatCalls.current.get(sessionId);
+    if (!sessionId || !call) return;
+    chatStopped.current.add(sessionId);
+    if (pauseQueue)
+      setPaused((ids) => (ids.includes(sessionId) ? ids : [...ids, sessionId]));
+    void ai.cancelAI(call).catch((e) => notify(err(e), true));
+  };
+  /** Lets the active chat's held questions go on. */
+  const resumeQueue = () => {
+    const id = doc?.activeChat;
+    if (id) setPaused((ids) => ids.filter((x) => x !== id));
   };
   const resumeChat = (message: ChatMessage) => {
     if (!doc?.activeChat) return;
     // Resuming undoes the stop: the held questions follow this answer.
-    setQueuePaused(false);
+    resumeQueue();
     void runChat(doc.activeChat, "", message);
   };
   const removeQueued = (id: string) =>
     setQueue((items) => items.filter((q) => q.id !== id));
   /** Moves a queued question to the front and sends it right away. */
   const sendQueuedNow = (id: string) => {
-    setQueue((items) => {
-      const item = items.find((q) => q.id === id);
-      return item ? [item, ...items.filter((q) => q.id !== id)] : items;
-    });
-    setQueuePaused(false);
-    stopChat(false);
+    const item = queue.find((q) => q.id === id);
+    if (!item) return;
+    setQueue((items) => [item, ...items.filter((q) => q.id !== id)]);
+    setPaused((ids) => ids.filter((x) => x !== item.sessionId));
+    stopChat(item.sessionId, false);
   };
   const editQueued = (id: string) => {
     const item = queue.find((q) => q.id === id);
@@ -862,18 +895,27 @@ export function useStudy() {
   };
   // A pause only holds questions that were already waiting.
   useEffect(() => {
-    if (queuePaused && !queue.length) setQueuePaused(false);
-  }, [queue.length, queuePaused]);
+    const waiting = paused.filter((id) => queue.some((q) => q.sessionId === id));
+    if (waiting.length !== paused.length) setPaused(waiting);
+  }, [queue, paused]);
+  // Each chat sends its next question once its own answer is done.
   useEffect(() => {
-    if (!doc || !pdf || chatBusy || processing || queuePaused) return;
-    if (!account || !model) return;
-    const next = queue.find((q) => q.docId === doc.id);
-    if (!next) return;
-    setQueue((items) => items.filter((q) => q.id !== next.id));
-    void runChat(next.sessionId, next.text);
+    if (!doc || !pdf || !account || !model) return;
+    const seen = new Set<string>();
+    const next: typeof queue = [];
+    for (const q of queue) {
+      if (q.docId !== doc.id || seen.has(q.sessionId)) continue;
+      seen.add(q.sessionId);
+      if (!answering.current.has(q.sessionId) && !paused.includes(q.sessionId))
+        next.push(q);
+    }
+    if (!next.length) return;
+    const ids = new Set(next.map((q) => q.id));
+    setQueue((items) => items.filter((q) => !ids.has(q.id)));
+    for (const q of next) void runChat(q.sessionId, q.text);
     // runChat reads the latest document from this render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue, queuePaused, chatBusy, processing, doc?.id, pdf, account, model]);
+  }, [queue, paused, running, doc?.id, pdf, account, model]);
   const askPath = async (name: string) => {
     const { save } = await import("@tauri-apps/plugin-dialog");
     return save({
@@ -930,6 +972,11 @@ export function useStudy() {
         new Map(current.pages.map((page, index) => [index + 1, page])),
       );
     viewKeys.current.set(id, viewKeys.current.get(current.id) ?? current.id);
+    if (id !== current.id && current.pages.every((page, i) => page === i + 1))
+      continued.current.set(id, current.id);
+    setQueue((items) =>
+      items.map((q) => (q.docId === current.id ? { ...q, docId: id } : q)),
+    );
     await saveChain.current;
     await storage.saveDocument(next);
     await storage.storePDF(id, buffer);
@@ -940,6 +987,7 @@ export function useStudy() {
       task,
       parsed,
       await aspectOf(parsed, next.currentPage),
+      true,
     );
     setSelected([]);
     setSelection(false);
@@ -1246,7 +1294,7 @@ export function useStudy() {
       (q) => q.docId === doc?.id && q.sessionId === doc?.activeChat,
     ),
     queuePaused,
-    setQueuePaused,
+    resumeQueue,
     stopChat,
     resumeChat,
     removeQueued,
@@ -1262,7 +1310,8 @@ export function useStudy() {
     inputRef,
     canvasRegion,
     chatEnd,
-    chatRequest,
+    /** The answer being written in the active chat. */
+    liveAnswer: doc?.activeChat ? running[doc.activeChat] : undefined,
     refreshLibrary,
     notify,
     update,
@@ -1273,7 +1322,7 @@ export function useStudy() {
     messages,
     chatSession,
     chatHistory,
-    streamingChat,
+    streamingChats,
     newChat,
     openChat,
     closeChat,

@@ -221,7 +221,7 @@ export default function App() {
         s.setRightOpen(false);
         return;
       }
-      if (s.streamingChat === id) s.stopChat(false);
+      if (s.streamingChats.includes(id)) s.stopChat(id, false);
       s.closeChat(id);
       requestAnimationFrame(() => chatInput.current?.focus());
       return;

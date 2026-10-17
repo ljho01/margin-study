@@ -98,7 +98,6 @@ export default function AnalysisPanel({ s }: { s: Study }) {
       >
         <Button
           size="sm"
-          disabled={s.chatBusy}
           onClick={() => void s.runAnalysis(false, true)}
         >
           이 페이지 처리
@@ -106,7 +105,7 @@ export default function AnalysisPanel({ s }: { s: Study }) {
         <Button
           size="sm"
           variant="secondary"
-          disabled={s.chatBusy || allDone}
+          disabled={allDone}
           onClick={() => void s.runAnalysis(true)}
         >
           문서 전체 처리
@@ -127,7 +126,6 @@ export default function AnalysisPanel({ s }: { s: Study }) {
       >
         <Button
           size="sm"
-          disabled={s.chatBusy}
           onClick={() => translate(false)}
         >
           이 페이지 번역
@@ -135,7 +133,6 @@ export default function AnalysisPanel({ s }: { s: Study }) {
         <Button
           size="sm"
           variant="secondary"
-          disabled={s.chatBusy}
           onClick={() => translate(true)}
         >
           문서 전체 번역
@@ -177,7 +174,7 @@ export default function AnalysisPanel({ s }: { s: Study }) {
             size="sm"
             variant="ghost"
             className="mt-4 -ml-2 text-muted-foreground"
-            disabled={s.chatBusy || !!processing}
+            disabled={!!processing}
             onClick={() => void s.runAnalysis(false, true)}
           >
             <RefreshCw />
