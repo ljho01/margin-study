@@ -16,6 +16,19 @@ const OUTLINE = "#3b82f6";
 /** Font size of new text, in pixels at the current page width. */
 const NEW_TEXT_SIZE = 16;
 
+/**
+ * The box a text mark is typed in and shown in. The negative margin lines
+ * its glyphs up with the PDF export, which hangs the text from the point.
+ */
+const textBox = (point: Point, size: number, color: string) => ({
+  left: `${point.x * 100}%`,
+  top: `${point.y * 100}%`,
+  marginTop: -0.1 * size,
+  fontSize: size,
+  lineHeight: 1.5,
+  color,
+});
+
 const translate = (a: Annotation, d: Point): Annotation => ({
   ...a,
   points: a.points.map((p) => ({ x: p.x + d.x, y: p.y + d.y })),
@@ -45,7 +58,7 @@ export default function AnnotationLayer({
   onTextDone?: (id: string) => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const nodes = useRef(new Map<string, SVGGraphicsElement>());
+  const nodes = useRef(new Map<string, Element>());
   const [draft, setDraft] = useState<Annotation | null>(null);
   const draftRef = useRef<Annotation | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -63,8 +76,6 @@ export default function AnnotationLayer({
     offset: Point | null;
   } | null>(null);
   const [box, setBox] = useState<Box | null>(null);
-  const texts = useRef(new Map<string, SVGTextElement>());
-  const [textBoxes, setTextBoxes] = useState<Record<string, Box>>({});
 
   useLayoutEffect(() => {
     const node = editorNode.current;
@@ -78,21 +89,34 @@ export default function AnnotationLayer({
     selection?.removeAllRanges();
     selection?.addRange(range);
   }, [editor]);
-  useLayoutEffect(() => {
-    const node = selected ? nodes.current.get(selected) : undefined;
-    const b = node?.getBBox();
-    setBox(b ? { x: b.x, y: b.y, width: b.width, height: b.height } : null);
-  }, [selected, annotations, width, height, editor]);
-  useLayoutEffect(() => {
-    const next: Record<string, Box> = {};
-    for (const [id, node] of texts.current) {
+  /** Where a mark is drawn, in page pixels. */
+  const boundsOf = (id: string): Box | null => {
+    const node = nodes.current.get(id);
+    if (!node) return null;
+    if (node instanceof SVGGraphicsElement) {
       const b = node.getBBox();
-      next[id] = { x: b.x, y: b.y, width: b.width, height: b.height };
+      return { x: b.x, y: b.y, width: b.width, height: b.height };
     }
-    setTextBoxes((prev) =>
-      JSON.stringify(prev) === JSON.stringify(next) ? prev : next,
-    );
-  }, [annotations, width, height, editor]);
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const page = svg.getBoundingClientRect();
+    const r = node.getBoundingClientRect();
+    const k = width / page.width;
+    return {
+      x: (r.left - page.left) * k,
+      y: (r.top - page.top) * k,
+      width: r.width * k,
+      height: r.height * k,
+    };
+  };
+  // Text draws its own outline (the same box it is typed in); other marks
+  // get one in the SVG.
+  useLayoutEffect(() => {
+    const mark = annotations.find((a) => a.id === selected);
+    setBox(mark && mark.type !== "text" ? boundsOf(mark.id) : null);
+    // boundsOf reads the nodes rendered for these values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, annotations, width, height, editor]);
 
   // A click (no text selected) on a highlight selects it with the select
   // tool, since highlights do not take the pointer there.
@@ -101,6 +125,7 @@ export default function AnnotationLayer({
     const svg = svgRef.current;
     if (tool !== "select" || !svg) return;
     if (svg.contains(event.target as Node)) return;
+    if ((event.target as Element | null)?.closest?.("[data-text-mark]")) return;
     if (!window.getSelection()?.isCollapsed) return;
     const r = svg.getBoundingClientRect();
     const x = (event.clientX - r.left) / r.width;
@@ -224,7 +249,7 @@ export default function AnnotationLayer({
     setDraft(null);
   };
 
-  const grab = (a: Annotation, event: PointerEvent<SVGElement>) => {
+  const grab = (a: Annotation, event: PointerEvent<Element>) => {
     event.stopPropagation();
     if (tool === "text" && a.type === "text") {
       // With the text tool, clicking existing text edits it.
@@ -242,7 +267,7 @@ export default function AnnotationLayer({
     event.preventDefault();
     window.getSelection()?.removeAllRanges();
     onSelect(a.id);
-    const b = nodes.current.get(a.id)?.getBBox();
+    const b = boundsOf(a.id);
     dragRef.current = {
       id: a.id,
       start: raw(event),
@@ -258,7 +283,7 @@ export default function AnnotationLayer({
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
-  const drag = (event: PointerEvent<SVGElement>) => {
+  const drag = (event: PointerEvent<Element>) => {
     const d = dragRef.current;
     if (!d) return;
     const p = raw(event);
@@ -363,52 +388,55 @@ export default function AnnotationLayer({
         </g>
       );
     }
-    const hit = textBoxes[a.id];
+    // Text is drawn as HTML next to the SVG, below.
+    return null;
+  };
+  /**
+   * Text marks share the editor's box exactly, so a new text keeps the size
+   * it was typed in, and double-clicking edits it in place without the
+   * letters moving.
+   */
+  const renderText = (a: Annotation) => {
+    if (editor?.id === a.id) return null;
+    const moving = offset && dragRef.current?.id === a.id;
+    const hittable = interactive || tool === "text";
+    const chosen = tool === "select" && selected === a.id && !editor;
     return (
-      <g
+      <div
         key={a.id}
-        {...common}
+        ref={(node) => {
+          if (node) nodes.current.set(a.id, node);
+          else nodes.current.delete(a.id);
+        }}
+        data-text-mark
+        data-selected={chosen || undefined}
+        className="absolute z-10 whitespace-pre select-none"
+        style={{
+          ...textBox(a.points[0], a.width * width, a.color),
+          outline: chosen ? `1px solid ${OUTLINE}` : undefined,
+          transform: moving
+            ? `translate(${offset.x * width}px, ${offset.y * height}px)`
+            : undefined,
+          pointerEvents: hittable ? "auto" : "none",
+          cursor:
+            tool === "eraser"
+              ? "crosshair"
+              : tool === "select"
+                ? "move"
+                : "text",
+        }}
+        onPointerDown={(event) => grab(a, event)}
+        onPointerMove={drag}
+        // With the text tool the editor opens on release, as on empty page.
+        onPointerUp={() => (pendingText.current ? up() : drop())}
+        onPointerCancel={drop}
         onDoubleClick={() => {
           if (tool !== "select") return;
           openEditor({ point: a.points[0], id: a.id, initial: a.text });
         }}
       >
-        {hit && (
-          <rect
-            x={hit.x - 2}
-            y={hit.y - 2}
-            width={hit.width + 4}
-            height={hit.height + 4}
-            fill="transparent"
-            style={{ pointerEvents: hittable ? "all" : "none" }}
-          />
-        )}
-        <text
-          ref={(node) => {
-            if (node) texts.current.set(a.id, node);
-            else texts.current.delete(a.id);
-          }}
-          x={a.points[0].x * width}
-          y={a.points[0].y * height}
-          fill={a.color}
-          fontSize={a.width * width}
-          dominantBaseline="text-before-edge"
-        >
-          {a.text?.split("\n").map((line, i) => (
-            // WebKit does not inherit dominant-baseline into tspans; without
-            // it here the text sat a line too high (its baseline on the point)
-            // in the app, while the editor and PDF export use the top.
-            <tspan
-              key={i}
-              x={a.points[0].x * width}
-              dy={i ? "1.5em" : 0}
-              dominantBaseline="text-before-edge"
-            >
-              {line}
-            </tspan>
-          ))}
-        </text>
-      </g>
+        {a.text}
+      </div>
     );
   };
   const all = draft ? [...annotations, draft] : annotations;
@@ -491,6 +519,7 @@ export default function AnnotationLayer({
           />
         )}
       </svg>
+      {all.filter((a) => a.type === "text").map(renderText)}
       {editor && (
         // A bare box that hugs the text, drawn where the text will stay. The
         // negative margin lines its glyphs up with the SVG text, which hangs
@@ -505,13 +534,8 @@ export default function AnnotationLayer({
           spellCheck={false}
           className="absolute z-20 cursor-text whitespace-pre"
           style={{
-            left: `${editor.point.x * 100}%`,
-            top: `${editor.point.y * 100}%`,
-            marginTop: -0.1 * editorSize,
+            ...textBox(editor.point, editorSize, editing?.color ?? color),
             minWidth: 2,
-            color: editing?.color ?? color,
-            fontSize: editorSize,
-            lineHeight: 1.5,
             outline: `1px solid ${OUTLINE}`,
           }}
           onBlur={commitText}
