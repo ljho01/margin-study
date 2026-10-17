@@ -6,7 +6,7 @@ import {
 } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { Button } from "@/components/ui/button";
-import { highlightRects } from "@/lib/pdf";
+import { highlightRects, inPaintOrder } from "@/lib/pdf";
 import { cachedThumbnail, renderThumbnail } from "@/lib/thumbnails";
 import type { Annotation } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -34,7 +34,7 @@ function Marks({
       height={height}
       viewBox={`0 0 ${width} ${height}`}
     >
-      {annotations.map((a) => {
+      {inPaintOrder(annotations).map((a) => {
         if (a.type === "highlight")
           return (
             <g

@@ -269,6 +269,17 @@ export function highlightRects(annotation: Annotation) {
   ];
 }
 
+/**
+ * Highlights go under pen strokes and text, whatever order they were made
+ * in, like a highlighter on paper. The sort is stable, so marks of one kind
+ * keep their order.
+ */
+export function inPaintOrder(annotations: Annotation[]) {
+  return [...annotations].sort(
+    (a, b) => +(a.type !== "highlight") - +(b.type !== "highlight"),
+  );
+}
+
 function addAnnotation(
   pdf: PDFDocument,
   page: PDFPage,
@@ -447,7 +458,7 @@ export async function writePdf(
     ? await pdf.embedFont(await loadFont(), { subset: false })
     : undefined;
   for (const pageNumber of doc.pages)
-    for (const annotation of doc.annotations[pageNumber] ?? [])
+    for (const annotation of inPaintOrder(doc.annotations[pageNumber] ?? []))
       addAnnotation(pdf, original[pageNumber - 1], annotation, font);
   return pdf.save(SAVE);
 }

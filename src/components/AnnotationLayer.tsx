@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type PointerEvent } from "react";
 import type { Annotation, Point, Tool } from "@/lib/types";
-import { highlightRects } from "@/lib/pdf";
+import { highlightRects, inPaintOrder } from "@/lib/pdf";
 
 type Box = { x: number; y: number; width: number; height: number };
 type Editor = { point: Point; id?: string; initial?: string };
@@ -397,8 +397,10 @@ export default function AnnotationLayer({
           setDraft(null);
         }}
       >
-        {annotations.map(render)}
-        {draft && render(draft)}
+        {/* A highlight being drawn already sits under the pen and text. */}
+        {inPaintOrder(draft ? [...annotations, draft] : annotations).map(
+          render,
+        )}
         {tool === "select" && box && !editor && (
           <rect
             fill="none"
