@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import ChatMarkdown from "@/components/ChatMarkdown";
+import Markdown from "@/components/Markdown";
 import { normalizeMath } from "./math";
 
 // An answer as the model wrote it (the case that showed as plain text).
@@ -28,13 +29,18 @@ describe("math delimiters", () => {
     expect(normalizeMath(String.raw`a \( x + `)).toBe(String.raw`a \( x + `);
   });
 
-  test("the answer renders every formula with KaTeX", () => {
-    const html = renderToStaticMarkup(<ChatMarkdown>{answer}</ChatMarkdown>);
-    // Five formulas, none left as raw TeX.
-    expect(html.match(/class="katex"/g)?.length).toBe(5);
-    // KaTeX keeps the source in a MathML annotation; outside it, no TeX.
-    const shown = html.replace(/<annotation[\s\S]*?<\/annotation>/g, "");
-    expect(shown).not.toContain("\\mathbb");
-    expect(shown).not.toContain("\\sum");
-  });
+  // The chat and the bottom panel use different Markdown renderers.
+  for (const [name, render] of [
+    ["chat", () => renderToStaticMarkup(<ChatMarkdown>{answer}</ChatMarkdown>)],
+    ["bottom panel", () => renderToStaticMarkup(<Markdown>{answer}</Markdown>)],
+  ] as const)
+    test(`the ${name} renders every formula with KaTeX`, () => {
+      const html = render();
+      // Five formulas, none left as raw TeX.
+      expect(html.match(/class="katex"/g)?.length).toBe(5);
+      // KaTeX keeps the source in a MathML annotation; outside it, no TeX.
+      const shown = html.replace(/<annotation[\s\S]*?<\/annotation>/g, "");
+      expect(shown).not.toContain("\\mathbb");
+      expect(shown).not.toContain("\\sum");
+    });
 });
