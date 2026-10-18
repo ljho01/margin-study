@@ -161,7 +161,7 @@ function StickyQuestion({
       className={cn(
         "sticky -top-px z-10 -mx-4 bg-background px-4 pt-px",
         stuck &&
-          "cursor-pointer pb-2 shadow-[0_1px_0_var(--border)] [&_*]:cursor-pointer",
+          "cursor-pointer pb-2 [&_*]:cursor-pointer",
       )}
       style={{ marginBottom: keep || undefined }}
       title={stuck ? "질문으로 이동" : undefined}
