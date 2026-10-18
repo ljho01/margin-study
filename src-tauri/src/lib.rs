@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 mod files;
 mod claude;
+mod relaunch;
 #[cfg(target_os = "macos")]
 mod traffic;
 mod workspace;
@@ -733,6 +734,7 @@ pub fn run() {
         .manage(Runtime::default())
         .manage(claude::ClaudeState::default())
         .manage(workspace::WorkspaceState::default())
+        .manage(relaunch::RelaunchState::capture())
         .setup(|_app| {
             // Cmd+W must not close the window, which would quit the app. A
             // custom File > Close item takes the shortcut and lets the web UI
@@ -787,6 +789,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            relaunch::restart_installed_app,
             claude::claude_status,
             claude::claude_login,
             claude::claude_cancel_login,

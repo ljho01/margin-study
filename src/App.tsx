@@ -277,7 +277,12 @@ export default function App() {
         toast(`새 버전 ${version}이 설치됐어요`, {
           description: "다시 시작하면 적용돼요.",
           duration: Infinity,
-          action: { label: "다시 시작", onClick: () => void restartApp() },
+          action: {
+            label: "다시 시작",
+            onClick: () => void restartApp().catch((error) => {
+              toast.error("다시 시작하지 못했어요", { description: String(error) });
+            }),
+          },
         }),
       ),
     [],

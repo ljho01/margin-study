@@ -1,4 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 
 const EVERY = 6 * 60 * 60 * 1000;
 
@@ -34,6 +34,5 @@ export function startAutoUpdate(onInstalled: (version: string) => void) {
 }
 
 export async function restartApp() {
-  const { relaunch } = await import("@tauri-apps/plugin-process");
-  await relaunch();
+  await invoke("restart_installed_app");
 }
