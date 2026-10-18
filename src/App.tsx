@@ -949,11 +949,17 @@ export default function App() {
                               >
                                 <StablePage
                                   pdf={pdf}
+                                  onDisplayed={s.pageDisplayed}
                                   suspense={false}
                                   page={doc.currentPage}
                                   width={s.pageWidth}
                                   height={s.pageHeight}
                                   renderAnnotationLayer={false}
+                                  onRenderError={() =>
+                                    toast.error(
+                                      "페이지를 다시 그리지 못해 이전 화면을 유지하고 있어요.",
+                                    )
+                                  }
                                   onGetTextSuccess={({ items }) => {
                                     if (
                                       !items.some(

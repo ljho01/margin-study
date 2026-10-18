@@ -157,6 +157,14 @@ export function useStudy() {
   const chatStopped = useRef(new Set<string>());
   const opening = useRef(false);
   const loadingTask = useRef<PDFDocumentLoadingTask | null>(null);
+  const retiredTasks = useRef(new Set<PDFDocumentLoadingTask>());
+  const pageDisplayed = useCallback((visible: PDFDocumentProxy) => {
+    for (const task of retiredTasks.current) {
+      if (task === visible.loadingTask || task === loadingTask.current) continue;
+      retiredTasks.current.delete(task);
+      void task.destroy().catch(() => {});
+    }
+  }, []);
   // Saving re-reads the file under a new id; views of the document (the page
   // list) keep the key they were opened with so they are not rebuilt.
   const viewKeys = useRef(new Map<string, string>());
@@ -378,11 +386,12 @@ export function useStudy() {
     /** A save of the same document: waiting questions stay. */
     keepChats = false,
   ) => {
-    // Release the previous document after React has switched to the new one.
+    // StablePage still uses this document until the replacement has rendered.
+    // Its committed-frame callback releases it; a timer could retire it early
+    // on a large/slow PDF and discard the frame we are keeping on screen.
     const previous = loadingTask.current;
     loadingTask.current = task;
-    if (previous && previous !== task)
-      setTimeout(() => void previous.destroy(), 1000);
+    if (previous && previous !== task) retiredTasks.current.add(previous);
     setPdf(parsed);
     setBytes(display);
     // Known before the switch so the page box is sized once for the new file.
@@ -1291,6 +1300,7 @@ export function useStudy() {
     viewKey: doc ? (viewKeys.current.get(doc.id) ?? doc.id) : null,
     bytes,
     pdf,
+    pageDisplayed,
     setPdf,
     library,
     libraryOpen,
