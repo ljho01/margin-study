@@ -115,66 +115,92 @@ function ChatTab({
   );
 }
 
-/**
- * A question pinned to the top of the chat while its answer scrolls past.
- * Pinned, it shrinks to two lines; a click scrolls back to the full text.
- */
+/** Native sticky geometry stays constant; pinning only switches visibility. */
 function StickyQuestion({
   children,
 }: {
   children: (stuck: boolean) => ReactNode;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const anchor = useRef<HTMLDivElement>(null);
+  const header = useRef<HTMLDivElement>(null);
+  const full = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(false);
+  const [space, setSpace] = useState(0);
+
+  useLayoutEffect(() => {
+    const expanded = full.current;
+    const compact = header.current;
+    if (!expanded || !compact) return;
+    // Both versions remain laid out. Reserve the full question's space even
+    // when only its summary is visible; never resize the scroll flow on pinning.
+    const measure = () =>
+      setSpace(Math.max(0, expanded.offsetHeight - compact.offsetHeight));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(expanded);
+    observer.observe(compact);
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
-    const node = ref.current;
+    const node = anchor.current;
     const root = node?.closest("[data-slot=scroll-area-viewport]");
     if (!node || !root) return;
-    // Pinned at top: -1px, the header is clipped by one pixel.
+    // Observe a stationary marker, never the sticky element itself. Delivery
+    // can lag behind compositor scrolling; it affects content, not position.
     const observer = new IntersectionObserver(
       ([entry]) =>
-        setStuck(
-          entry.intersectionRatio < 1 &&
-            entry.boundingClientRect.top < (entry.rootBounds?.top ?? 0),
-        ),
-      // 0 as well, so leaving the view (no longer clipped) is noticed.
-      { root, threshold: [0, 1] },
+        setStuck(entry.boundingClientRect.top < (entry.rootBounds?.top ?? 0)),
+      { root, rootMargin: "-4px 0px 0px 0px", threshold: [0, 1] },
     );
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
-  // Pinned, the question changes height (two lines, more padding); a bottom
-  // margin, negative if it grew, keeps the answer where the reader left it.
-  const full = useRef(0);
-  const [keep, setKeep] = useState(0);
-  useLayoutEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    if (!stuck) {
-      full.current = node.offsetHeight;
-      setKeep(0);
-    } else setKeep(full.current - node.offsetHeight);
-  }, [stuck]);
+
+  const reveal = () =>
+    anchor.current?.scrollIntoView({ block: "start", behavior: "smooth" });
   return (
-    <div
-      ref={ref}
-      className={cn(
-        "sticky -top-px z-10 -mx-4 bg-background px-4 pt-px",
-        // Pinned: 4px below the top edge (plus the pixel kept out of view).
-        stuck && "cursor-pointer pt-[5px] pb-2 [&_*]:cursor-pointer",
-      )}
-      style={{ marginBottom: keep || undefined }}
-      title={stuck ? "질문으로 이동" : undefined}
-      onClick={() => {
-        if (stuck)
-          ref.current?.parentElement?.scrollIntoView({
-            block: "start",
-            behavior: "smooth",
-          });
-      }}
-    >
-      {children(stuck)}
-    </div>
+    <>
+      <div ref={anchor} aria-hidden className="h-px -mb-px scroll-mt-1" />
+      <div
+        ref={header}
+        data-sticky-question
+        data-pinned={stuck}
+        className={cn(
+          "sticky top-1 z-10 -mx-4 bg-background px-4 pb-2 before:absolute before:inset-x-0 before:-top-1 before:h-1 before:bg-background",
+          stuck && "cursor-pointer [&_*]:cursor-pointer",
+        )}
+        role={stuck ? "button" : undefined}
+        tabIndex={stuck ? 0 : undefined}
+        title={stuck ? "질문으로 이동" : undefined}
+        onClick={() => {
+          if (stuck) reveal();
+        }}
+        onKeyDown={(event) => {
+          if (stuck && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            reveal();
+          }
+        }}
+      >
+        {/* This version sets the sticky box's constant height. The expanded
+            version overflows into the reserved space until the question pins. */}
+        <div className={cn(!stuck && "invisible")} aria-hidden={!stuck}>
+          {children(true)}
+        </div>
+        <div
+          ref={full}
+          className={cn(
+            "absolute inset-x-0 top-0 bg-background px-4 pb-2",
+            stuck && "invisible",
+          )}
+          aria-hidden={stuck}
+        >
+          {children(false)}
+        </div>
+      </div>
+      <div aria-hidden style={{ height: space }} />
+    </>
   );
 }
 
@@ -351,7 +377,7 @@ export default function ChatPanel({
           {groups.map((group) => (
             // A question and its answers: the question stays pinned while
             // its answers scroll, and the next question pushes it out.
-            // (No space-y here: the pinned question sets its own bottom margin.)
+            // The question reserves its full height in both display states.
             <section key={group.key}>
               {group.question && (
                 <StickyQuestion>
@@ -361,7 +387,7 @@ export default function ChatPanel({
               {group.answers.map(([message, index], i) => (
                 <div
                   key={message.id}
-                  // Padding: a margin would collapse with the pinned question's.
+                  // Keep answer spacing inside the question/answer group.
                   className={cn((group.question || i > 0) && "pt-6")}
                 >
                   {body(message, index, false)}
