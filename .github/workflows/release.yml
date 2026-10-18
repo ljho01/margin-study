@@ -66,6 +66,8 @@ jobs:
 
       - name: Tests
         run: |
+          bun run scripts/prepare-ocr.ts
+          bun run build
           bun test
           cd src-tauri
           cargo test --lib
