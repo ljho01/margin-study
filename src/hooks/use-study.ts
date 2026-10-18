@@ -22,6 +22,7 @@ import { NEW_CHAT_TITLE } from "@/lib/chat-sessions";
 import { carryThumbnails } from "@/lib/thumbnails";
 import { repairLatex } from "@/lib/latex";
 import { quoteToken, quotesAsText, quotesForAI } from "@/lib/quotes";
+import { createChatDraftStore } from "@/lib/chat-draft";
 import type {
   Account,
   Annotation,
@@ -139,7 +140,8 @@ export function useStudy() {
   >([]);
   /** Chats whose waiting questions are held after a stop. */
   const [paused, setPaused] = useState<string[]>([]);
-  const [question, setQuestion] = useState("");
+  const [chatDraft] = useState(createChatDraftStore);
+  const { setQuestion } = chatDraft.getState();
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<number[] | null>(null);
   const [searchBusy, setSearchBusy] = useState(false);
@@ -866,7 +868,7 @@ export function useStudy() {
   };
   /** Sends now, or queues the question while another answer is running. */
   const sendChat = (suggestion?: string) => {
-    const text = (suggestion ?? question).trim();
+    const text = (suggestion ?? chatDraft.getState().question).trim();
     if (!doc || !pdf || !text || !doc.activeChat) return;
     // Keep the typed question when the account still needs to be connected.
     if (!requireAI()) return;
@@ -1351,8 +1353,7 @@ export function useStudy() {
     removeQueued,
     sendQueuedNow,
     editQueued,
-    question,
-    setQuestion,
+    chatDraft,
     search,
     setSearch,
     searchResults,

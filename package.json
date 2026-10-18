@@ -67,7 +67,8 @@
     "remark-gfm": "latest",
     "remark-math": "latest",
     "sonner": "^2.0.8",
-    "tailwind-merge": "latest"
+    "tailwind-merge": "latest",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",

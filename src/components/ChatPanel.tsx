@@ -6,6 +6,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { useStore } from "zustand";
 import { DragDropProvider } from "@dnd-kit/react";
 import { isSortable, useSortable } from "@dnd-kit/react/sortable";
 import { PointerActivationConstraints, PointerSensor } from "@dnd-kit/dom";
@@ -217,7 +218,6 @@ export default function ChatPanel({
   const tabs = (doc.openChats ?? [])
     .map((id) => doc.sessions?.find((x) => x.id === id))
     .filter((x): x is ChatSession => !!x);
-  const typed = !!s.question.trim();
   const pageLabel = (page: number) => {
     const index = doc.pages.indexOf(page);
     return index < 0 ? `원본 ${page}` : String(index + 1);
@@ -398,105 +398,121 @@ export default function ChatPanel({
           <div ref={s.chatEnd} />
         </div>
       </ScrollArea>
-      <form
-        className="relative m-3 shrink-0"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void s.sendChat();
-        }}
-      >
-        {!!s.queue.length && (
-          <ul aria-label="대기 중인 질문" className="mb-2 space-y-1">
-            {s.queue.map((item) => (
-              <li
-                key={item.id}
-                className="flex items-center gap-1 rounded-lg border bg-muted/50 py-1 pr-1 pl-2.5 text-sm"
-              >
-                <CornerDownRight className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate">
-                  {quotesAsText(item.text)}
-                </span>
-                <IconButton
-                  label="지금 보내기"
-                  className="size-7"
-                  type="button"
-                  onClick={() => s.sendQueuedNow(item.id)}
-                >
-                  <ArrowUp />
-                </IconButton>
-                <IconButton
-                  label="수정"
-                  hotkey="ArrowUp"
-                  className="size-7"
-                  type="button"
-                  onClick={() => {
-                    s.editQueued(item.id);
-                    requestAnimationFrame(() => input.current?.focus());
-                  }}
-                >
-                  <Pencil />
-                </IconButton>
-                <IconButton
-                  label="삭제"
-                  className="size-7"
-                  type="button"
-                  onClick={() => s.removeQueued(item.id)}
-                >
-                  <X />
-                </IconButton>
-              </li>
-            ))}
-          </ul>
-        )}
-        <ChatComposer
-          ref={input}
-          label="현재 페이지에 질문하기"
-          placeholder="질문 입력"
-          className="pb-12"
-          value={s.question}
-          onChange={s.setQuestion}
-          onSubmit={() => void s.sendChat()}
-          onArrowUp={() => {
-            // Like Codex: Up pulls the last waiting question back in to edit.
-            const last = s.queue.at(-1);
-            if (!last) return false;
-            s.editQueued(last.id);
-            return true;
-          }}
-          pageLabel={pageLabel}
-        />
-        {s.chatBusy && !typed ? (
-          <Button
-            className="absolute right-2 bottom-2"
-            size="icon-sm"
-            type="button"
-            aria-label="답변 중지"
-            onClick={() => s.stopChat()}
-          >
-            <Square />
-          </Button>
-        ) : !typed && s.queuePaused && s.queue.length ? (
-          <Button
-            className="absolute right-2 bottom-2"
-            size="icon-sm"
-            type="button"
-            aria-label="대기열 재개"
-            onClick={s.resumeQueue}
-          >
-            <Play />
-          </Button>
-        ) : (
-          <Button
-            className="absolute right-2 bottom-2"
-            size="icon-sm"
-            type="submit"
-            aria-label={s.chatBusy ? "대기열에 추가" : "질문 보내기"}
-            disabled={!typed}
-          >
-            <ArrowUp />
-          </Button>
-        )}
-      </form>
+      <ChatInput s={s} input={input} pageLabel={pageLabel} />
     </aside>
+  );
+}
+
+function ChatInput({
+  s,
+  input,
+  pageLabel,
+}: {
+  s: ReturnType<typeof useStudy>;
+  input: RefObject<ComposerHandle | null>;
+  pageLabel: (page: number) => string;
+}) {
+  const question = useStore(s.chatDraft, (state) => state.question);
+  const typed = !!question.trim();
+  return (
+    <form
+      className="relative m-3 shrink-0"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void s.sendChat();
+      }}
+    >
+      {!!s.queue.length && (
+        <ul aria-label="대기 중인 질문" className="mb-2 space-y-1">
+          {s.queue.map((item) => (
+            <li
+              key={item.id}
+              className="flex items-center gap-1 rounded-lg border bg-muted/50 py-1 pr-1 pl-2.5 text-sm"
+            >
+              <CornerDownRight className="size-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">
+                {quotesAsText(item.text)}
+              </span>
+              <IconButton
+                label="지금 보내기"
+                className="size-7"
+                type="button"
+                onClick={() => s.sendQueuedNow(item.id)}
+              >
+                <ArrowUp />
+              </IconButton>
+              <IconButton
+                label="수정"
+                hotkey="ArrowUp"
+                className="size-7"
+                type="button"
+                onClick={() => {
+                  s.editQueued(item.id);
+                  requestAnimationFrame(() => input.current?.focus());
+                }}
+              >
+                <Pencil />
+              </IconButton>
+              <IconButton
+                label="삭제"
+                className="size-7"
+                type="button"
+                onClick={() => s.removeQueued(item.id)}
+              >
+                <X />
+              </IconButton>
+            </li>
+          ))}
+        </ul>
+      )}
+      <ChatComposer
+        ref={input}
+        label="현재 페이지에 질문하기"
+        placeholder="질문 입력"
+        className="pb-12"
+        value={question}
+        onChange={s.chatDraft.getState().setQuestion}
+        onSubmit={() => void s.sendChat()}
+        onArrowUp={() => {
+          // Like Codex: Up pulls the last waiting question back in to edit.
+          const last = s.queue.at(-1);
+          if (!last) return false;
+          s.editQueued(last.id);
+          return true;
+        }}
+        pageLabel={pageLabel}
+      />
+      {s.chatBusy && !typed ? (
+        <Button
+          className="absolute right-2 bottom-2"
+          size="icon-sm"
+          type="button"
+          aria-label="답변 중지"
+          onClick={() => s.stopChat()}
+        >
+          <Square />
+        </Button>
+      ) : !typed && s.queuePaused && s.queue.length ? (
+        <Button
+          className="absolute right-2 bottom-2"
+          size="icon-sm"
+          type="button"
+          aria-label="대기열 재개"
+          onClick={s.resumeQueue}
+        >
+          <Play />
+        </Button>
+      ) : (
+        <Button
+          className="absolute right-2 bottom-2"
+          size="icon-sm"
+          type="submit"
+          aria-label={s.chatBusy ? "대기열에 추가" : "질문 보내기"}
+          disabled={!typed}
+        >
+          <ArrowUp />
+        </Button>
+      )}
+    </form>
   );
 }
