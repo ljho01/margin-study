@@ -536,7 +536,9 @@ export default function AnnotationLayer({
           style={{
             ...textBox(editor.point, editorSize, editing?.color ?? color),
             minWidth: 2,
-            outline: `1px solid ${OUTLINE}`,
+            // Thicker while typing than the selection outline. An outline
+            // takes no layout space, so the letters stay where they were.
+            outline: `2px solid ${OUTLINE}`,
           }}
           onBlur={commitText}
           onPointerDown={(e) => e.stopPropagation()}
