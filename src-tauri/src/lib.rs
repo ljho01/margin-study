@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 mod files;
+mod claude;
 #[cfg(target_os = "macos")]
 mod traffic;
 mod workspace;
@@ -470,6 +471,9 @@ async fn ask_ai(
     {
         return Err("페이지가 너무 큽니다. 더 작은 PDF로 다시 시도해 주세요.".into());
     }
+    if request.model.starts_with("claude-") {
+        return claude::ask(&app, &state, request).await;
+    }
     let runtime = bridge(&app, &state).await?;
     let account = runtime
         .rpc("account/read", json!({"refreshToken":false}))
@@ -645,6 +649,9 @@ async fn cancel_ai(
     state: tauri::State<'_, Runtime>,
     request_id: String,
 ) -> Reply {
+    if claude::cancel(&app, &request_id).await {
+        return Ok(json!({}));
+    }
     let active = state.active.lock().await.get(&request_id).cloned();
     if let Some((thread_id, turn_id)) = active {
         // Answer the stopped turn's open tool calls now, so they do not hold
@@ -680,14 +687,12 @@ async fn cancel_ai(
 
 #[tauri::command]
 async fn resolve_tool_call(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Runtime>,
     call_id: String,
     success: bool,
     content_items: Vec<Value>,
 ) -> Result<(), String> {
-    let Some((bridge, id, _)) = state.tool_calls.lock().await.remove(&call_id) else {
-        return Ok(());
-    };
     let mut size = 0;
     for item in &content_items {
         let valid = match item["type"].as_str() {
@@ -705,6 +710,12 @@ async fn resolve_tool_call(
     } else {
         json!({"success":success,"contentItems":content_items})
     };
+    if claude::resolve(&app, &call_id, result.clone()).await {
+        return Ok(());
+    }
+    let Some((bridge, id, _)) = state.tool_calls.lock().await.remove(&call_id) else {
+        return Ok(());
+    };
     bridge.respond(id, result).await
 }
 
@@ -720,6 +731,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(Runtime::default())
+        .manage(claude::ClaudeState::default())
         .manage(workspace::WorkspaceState::default())
         .setup(|_app| {
             // Cmd+W must not close the window, which would quit the app. A
@@ -775,6 +787,11 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            claude::claude_status,
+            claude::claude_login,
+            claude::claude_cancel_login,
+            claude::claude_logout,
+            claude::claude_models,
             account_status,
             account_login,
             account_cancel,

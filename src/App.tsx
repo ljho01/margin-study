@@ -466,7 +466,7 @@ export default function App() {
           </DropdownMenuContent>
         </DropdownMenu>
         <IconButton
-          label="ChatGPT 설정"
+          label="AI 구독 설정"
           onClick={() => s.setSettingsOpen(true)}
         >
           <Settings2 />
@@ -1108,16 +1108,12 @@ export default function App() {
           open={s.settingsOpen}
           onOpenChange={(open) => {
             s.setSettingsOpen(open);
-            if (!open && s.loginId) {
-              void ai.cancelLogin(s.loginId).catch(s.workspaceError);
-              s.setLoginId(null);
-              s.setAuthBusy(false);
-            }
+            if (!open && s.authBusy) s.cancelAuth();
           }}
         >
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>ChatGPT 설정</DialogTitle>
+              <DialogTitle>AI 구독 설정</DialogTitle>
               <DialogDescription className="sr-only">
                 계정 및 모델 설정
               </DialogDescription>
@@ -1127,67 +1123,109 @@ export default function App() {
                 <p className="text-sm text-muted-foreground">
                   데스크톱 앱에서 연결할 수 있습니다.
                 </p>
-              ) : s.account ? (
-                <>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate text-sm">{s.account.email}</span>
-                    <IconButton
-                      label="로그아웃"
-                      disabled={s.authBusy || busy}
-                      onClick={() => void s.authAction("logout")}
-                    >
-                      <LogOut />
-                    </IconButton>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="model">모델</Label>
-                    <Select
-                      value={s.model}
-                      onValueChange={s.setModel}
-                      disabled={busy}
-                    >
-                      <SelectTrigger id="model" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {s.modelList.map((model) => (
-                          <SelectItem key={model.id} value={model.model}>
-                            {model.displayName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </>
               ) : (
-                <div className="flex flex-col gap-2">
-                  <Button
-                    disabled={s.authBusy}
-                    onClick={() => void s.authAction("login")}
-                  >
-                    {s.authBusy && <Loader2 className="animate-spin" />}
-                    ChatGPT 로그인
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={s.authBusy}
-                    onClick={() => void s.authAction("existing")}
-                  >
-                    기존 로그인 연결
-                  </Button>
-                  {s.loginId && (
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        void ai.cancelLogin(s.loginId!).catch(s.workspaceError);
-                        s.setLoginId(null);
-                        s.setAuthBusy(false);
-                      }}
-                    >
-                      취소
-                    </Button>
+                <>
+                  <div className="space-y-4">
+                    {(["chatgpt", "claude"] as const).map((provider) => {
+                      const account =
+                        provider === "claude" ? s.claudeAccount : s.account;
+                      const name = provider === "claude" ? "Claude" : "ChatGPT";
+                      const waiting =
+                        s.loginId &&
+                        s.loginId.startsWith("claude:") ===
+                          (provider === "claude");
+                      return (
+                        <div
+                          key={provider}
+                          className="rounded-lg border p-3 space-y-2"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium">{name} 구독</p>
+                              <p className="truncate text-xs text-muted-foreground">
+                                {account
+                                  ? provider === "claude"
+                                    ? "연결됨"
+                                    : account.email
+                                  : "구독 계정으로 로그인하세요"}
+                              </p>
+                            </div>
+                            {account ? (
+                              <IconButton
+                                label={`${name} 연결 해제`}
+                                disabled={s.authBusy || busy}
+                                onClick={() =>
+                                  void s.authAction("logout", provider)
+                                }
+                              >
+                                <LogOut />
+                              </IconButton>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={s.authBusy}
+                                onClick={() =>
+                                  void s.authAction("login", provider)
+                                }
+                              >
+                                {waiting && (
+                                  <Loader2 className="animate-spin" />
+                                )}
+                                {name} 로그인
+                              </Button>
+                            )}
+                          </div>
+                          {!account && provider === "chatgpt" && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={s.authBusy}
+                              onClick={() => void s.authAction("existing")}
+                            >
+                              기존 로그인 연결
+                            </Button>
+                          )}
+                          {waiting && (
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-muted-foreground">
+                                브라우저에서 로그인을 완료해 주세요.
+                              </span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={s.cancelAuth}
+                              >
+                                취소
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {s.modelList.length > 0 && (
+                    <div className="space-y-2">
+                      <Label htmlFor="model">모델</Label>
+                      <Select
+                        value={s.model}
+                        onValueChange={s.setModel}
+                        disabled={busy}
+                      >
+                        <SelectTrigger id="model" className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {s.modelList.map((model) => (
+                            <SelectItem key={model.id} value={model.model}>
+                              {model.displayName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   )}
-                </div>
+                </>
               )}
               <div className="flex items-center gap-2">
                 <Checkbox

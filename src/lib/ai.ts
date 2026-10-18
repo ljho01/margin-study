@@ -5,42 +5,56 @@ export const desktop = isTauri();
 function native() {
   if (!desktop)
     throw new Error(
-      "ChatGPT 연결은 데스크톱 앱에서 사용할 수 있어요. 터미널에서 bun run desktop으로 실행해 주세요.",
+      "AI 구독 연결은 데스크톱 앱에서 사용할 수 있어요. 터미널에서 bun run desktop으로 실행해 주세요.",
     );
 }
-export async function accountStatus(): Promise<Account> {
+export type Provider = "chatgpt" | "claude";
+export async function accountStatus(
+  provider: Provider = "chatgpt",
+): Promise<Account> {
   native();
-  const result = await invoke<{ account: Account }>("account_status");
+  const result = await invoke<{ account: Account }>(
+    provider === "claude" ? "claude_status" : "account_status",
+  );
   return result.account;
 }
-export async function login() {
+export async function login(provider: Provider = "chatgpt") {
   native();
-  return invoke<{ loginId: string; authUrl: string }>("account_login");
+  return invoke<{ loginId: string; authUrl: string }>(
+    provider === "claude" ? "claude_login" : "account_login",
+  );
 }
 export async function cancelLogin(loginId: string) {
-  return invoke("account_cancel", { loginId });
+  return invoke(
+    loginId.startsWith("claude:") ? "claude_cancel_login" : "account_cancel",
+    { loginId },
+  );
 }
 export async function connectExisting(): Promise<Account> {
   native();
   const result = await invoke<{ account: Account }>("account_connect_existing");
   return result.account;
 }
-export async function logout() {
+export async function logout(provider: Provider = "chatgpt") {
   native();
-  await invoke("account_logout");
+  await invoke(provider === "claude" ? "claude_logout" : "account_logout");
 }
-export async function models(): Promise<Model[]> {
+export async function models(provider: Provider = "chatgpt"): Promise<Model[]> {
   native();
-  const result = await invoke<{ data: Model[] }>("list_models");
-  return result.data.filter(
-    (m) => !m.inputModalities || m.inputModalities.includes("image"),
+  const result = await invoke<{ data: Model[] }>(
+    provider === "claude" ? "claude_models" : "list_models",
   );
+  return result.data
+    .filter((m) => !m.inputModalities || m.inputModalities.includes("image"))
+    .map((m) => ({ ...m, provider }));
 }
-export async function onAccountChange(callback: (error?: string) => void) {
+export async function onAccountChange(
+  callback: (error?: string, provider?: Provider) => void,
+) {
   if (!desktop) return () => {};
   return listen<{
     method: string;
-    params: { success?: boolean; error?: string };
+    params: { success?: boolean; error?: string; provider?: Provider };
   }>("account-event", (event) => {
     const message = event.payload;
     callback(
@@ -49,6 +63,7 @@ export async function onAccountChange(callback: (error?: string) => void) {
         ? (message.params.error ??
             "로그인을 완료하지 못했어요. 다시 시도해 주세요.")
         : undefined,
+      message.params.provider ?? "chatgpt",
     );
   });
 }

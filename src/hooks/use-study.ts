@@ -80,9 +80,14 @@ export function useStudy() {
   const restoredWorkspace = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [account, setAccount] = useState<Account>(null);
+  const [claudeAccount, setClaudeAccount] = useState<Account>(null);
   const [modelList, setModelList] = useState<Model[]>([]);
   const [model, setModel] = useState(
     () => localStorage.getItem("margin-model") ?? "",
+  );
+  const accountForModel = model.startsWith("claude-") ? claudeAccount : account;
+  const authAttempt = useRef<{ provider: ai.Provider; id: string } | null>(
+    null,
   );
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
@@ -179,23 +184,37 @@ export function useStudy() {
         .catch((e) => notify(`문서 목록을 읽지 못했습니다: ${err(e)}`, true)),
     [notify],
   );
+  const accountRefresh = useRef(0);
   const refreshAccount = useCallback(async () => {
     if (!ai.desktop) return;
-    try {
-      const a = await ai.accountStatus();
-      setAccount(a);
-      if (a) {
-        const list = await ai.models();
-        setModelList(list);
-        setModel((current) =>
-          list.some((m) => m.model === current)
-            ? current
-            : ((list.find((m) => m.isDefault) ?? list[0])?.model ?? ""),
-        );
-      }
-    } catch (e) {
-      setAuthError(err(e));
-    }
+    const revision = ++accountRefresh.current;
+    const providers = ["chatgpt", "claude"] as const;
+    const results = await Promise.allSettled(
+      providers.map(async (provider) => {
+        const account = await ai.accountStatus(provider);
+        if (revision === accountRefresh.current)
+          (provider === "claude" ? setClaudeAccount : setAccount)(account);
+        return account ? ai.models(provider) : [];
+      }),
+    );
+    if (revision !== accountRefresh.current) return;
+    const list = results.flatMap((result) =>
+      result.status === "fulfilled" ? result.value : [],
+    );
+    setModelList(list);
+    setModel((current) =>
+      list.some((m) => m.model === current)
+        ? current
+        : ((list.find((m) => m.isDefault) ?? list[0])?.model ?? ""),
+    );
+    const errors = results.flatMap((result, i) =>
+      result.status === "rejected"
+        ? [
+            `${providers[i] === "claude" ? "Claude" : "ChatGPT"}: ${err(result.reason)}`,
+          ]
+        : [],
+    );
+    if (errors.length) setAuthError(errors.join("\n"));
   }, []);
   useEffect(() => {
     void refreshLibrary();
@@ -203,10 +222,14 @@ export function useStudy() {
     let dispose: (() => void) | undefined;
     let closed = false;
     void ai
-      .onAccountChange((error) => {
-        setAuthBusy(false);
-        setLoginId(null);
-        setAuthError(error ?? "");
+      .onAccountChange((error, provider) => {
+        // A background ChatGPT refresh must not end a pending Claude login.
+        if (!authAttempt.current || authAttempt.current.provider === provider) {
+          authAttempt.current = null;
+          setAuthBusy(false);
+          setLoginId(null);
+          setAuthError(error ?? "");
+        }
         void refreshAccount();
       })
       .then((unlisten) => {
@@ -605,7 +628,7 @@ export function useStudy() {
     }
   };
   const requireAI = () => {
-    if (!account || !model) {
+    if (!accountForModel || !model) {
       setSettingsOpen(true);
       return false;
     }
@@ -895,12 +918,14 @@ export function useStudy() {
   };
   // A pause only holds questions that were already waiting.
   useEffect(() => {
-    const waiting = paused.filter((id) => queue.some((q) => q.sessionId === id));
+    const waiting = paused.filter((id) =>
+      queue.some((q) => q.sessionId === id),
+    );
     if (waiting.length !== paused.length) setPaused(waiting);
   }, [queue, paused]);
   // Each chat sends its next question once its own answer is done.
   useEffect(() => {
-    if (!doc || !pdf || !account || !model) return;
+    if (!doc || !pdf || !accountForModel || !model) return;
     const seen = new Set<string>();
     const next: typeof queue = [];
     for (const q of queue) {
@@ -915,7 +940,7 @@ export function useStudy() {
     for (const q of next) void runChat(q.sessionId, q.text);
     // runChat reads the latest document from this render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue, paused, running, doc?.id, pdf, account, model]);
+  }, [queue, paused, running, doc?.id, pdf, accountForModel, model]);
   const askPath = async (name: string) => {
     const { save } = await import("@tauri-apps/plugin-dialog");
     return save({
@@ -1090,13 +1115,26 @@ export function useStudy() {
       setSearchBusy(false);
     }
   };
-  const authAction = async (action: "login" | "existing" | "logout") => {
+  const cancelAuth = () => {
+    authAttempt.current = null;
+    setLoginId(null);
+    setAuthBusy(false);
+    if (loginId)
+      void ai.cancelLogin(loginId).catch((e) => setAuthError(err(e)));
+  };
+  const authAction = async (
+    action: "login" | "existing" | "logout",
+    provider: ai.Provider = "chatgpt",
+  ) => {
     setAuthBusy(true);
     setAuthError("");
+    const attempt = { provider, id: crypto.randomUUID() };
+    authAttempt.current = attempt;
     try {
       if (action === "login") {
-        const result = await ai.login();
-        setLoginId(result.loginId);
+        const result = await ai.login(provider);
+        if (authAttempt.current === attempt) setLoginId(result.loginId);
+        else await ai.cancelLogin(result.loginId);
         return;
       }
       if (action === "existing") {
@@ -1107,13 +1145,14 @@ export function useStudy() {
             "기존 로그인을 연결하지 못했습니다. ChatGPT로 로그인해 주세요.",
           );
       } else {
-        await ai.logout();
-        setAccount(null);
+        await ai.logout(provider);
+        (provider === "claude" ? setClaudeAccount : setAccount)(null);
       }
       await refreshAccount();
     } catch (e) {
       setAuthError(err(e));
     }
+    if (authAttempt.current === attempt) authAttempt.current = null;
     setAuthBusy(false);
   };
 
@@ -1259,11 +1298,13 @@ export function useStudy() {
     settingsOpen,
     setSettingsOpen,
     account,
+    claudeAccount,
     modelList,
     model,
     setModel,
     authBusy,
     authError,
+    cancelAuth,
     loginId,
     setLoginId,
     setAuthBusy,

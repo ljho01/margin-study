@@ -72,9 +72,10 @@ export type Model = {
   displayName: string;
   isDefault: boolean;
   inputModalities?: string[];
+  provider?: "chatgpt" | "claude";
 };
 export type Account = {
-  type: "chatgpt";
+  type: "chatgpt" | "claude";
   email: string;
   planType: string;
 } | null;

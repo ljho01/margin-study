@@ -64,6 +64,12 @@ jobs:
             bun run scripts/prepare-codex.ts
           src-tauri/binaries/codex --version
 
+      - name: Tests
+        run: |
+          bun test
+          cd src-tauri
+          cargo test --lib
+
       - name: Signing keychain
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
