@@ -160,8 +160,8 @@ function StickyQuestion({
       ref={ref}
       className={cn(
         "sticky -top-px z-10 -mx-4 bg-background px-4 pt-px",
-        stuck &&
-          "cursor-pointer pb-2 [&_*]:cursor-pointer",
+        // Pinned: 4px below the top edge (plus the pixel kept out of view).
+        stuck && "cursor-pointer pt-[5px] pb-2 [&_*]:cursor-pointer",
       )}
       style={{ marginBottom: keep || undefined }}
       title={stuck ? "질문으로 이동" : undefined}
