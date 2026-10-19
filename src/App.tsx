@@ -651,10 +651,9 @@ export default function App() {
                                 workspace={workspace}
                                 activePath={s.activePath}
                                 disabled={busy}
-                                onOpen={async (entry) => {
-                                  if (await s.openWorkspaceFile(entry))
-                                    s.setSidebarTab("pages");
-                                }}
+                                onOpen={(entry) =>
+                                  void s.openWorkspaceFile(entry)
+                                }
                                 onError={s.workspaceError}
                                 onRelocate={s.relocateWorkspaceEntry}
                               />
