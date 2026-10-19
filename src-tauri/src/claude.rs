@@ -668,7 +668,7 @@ pub async fn ask(
     let result = tokio::select! {
         biased;
         _ = cancel.cancelled() => Err("요청을 중지했습니다.".into()),
-        result = tokio::time::timeout(Duration::from_secs(240), run(app, &state, &request)) => result.unwrap_or_else(|_| Err("Claude 응답 시간이 초과됐습니다. 다시 시도해 주세요.".into())),
+        result = tokio::time::timeout(super::AI_RESPONSE_TIMEOUT, run(app, &state, &request)) => result.unwrap_or_else(|_| Err("Claude 응답 시간이 초과됐습니다. 다시 시도해 주세요.".into())),
     };
     state.active.lock().await.remove(&request.request_id);
     state

@@ -131,7 +131,14 @@ export function useStudy() {
     total: number;
     page: number;
   } | null>(null);
-  const [processingError, setProcessingError] = useState("");
+  const [processingErrors, setProcessingErrors] = useState<{
+    docId: string;
+    pages: Record<number, string>;
+  } | null>(null);
+  const processingError =
+    doc && processingErrors?.docId === doc.id
+      ? (processingErrors.pages[doc.currentPage] ?? "")
+      : "";
   /** Chats answering right now: session id → id of the answer being written. */
   const [running, setRunning] = useState<Record<string, string>>({});
   /** Questions sent while their chat is answering, in send order. */
@@ -480,7 +487,7 @@ export function useStudy() {
       setSelection(false);
       setSearch("");
       setSearchResults(null);
-      setProcessingError("");
+      setProcessingErrors(null);
       setLibraryOpen(false);
       void refreshLibrary();
       return true;
@@ -668,12 +675,21 @@ export function useStudy() {
       return;
     }
     processStop.current = false;
-    setProcessingError("");
     setProcessing({ done: 0, total: pages.length, page: pages[0] });
+    let processingPage = pages[0];
     try {
       for (let index = 0; index < pages.length; index++) {
         if (processStop.current) break;
         const page = pages[index];
+        processingPage = page;
+        // Retrying one page must not erase errors belonging to other pages.
+        setProcessingErrors((current) => {
+          if (current?.docId !== snapshot.id || !current.pages[page])
+            return current;
+          const next = { ...current.pages };
+          delete next[page];
+          return { docId: snapshot.id, pages: next };
+        });
         setProcessing({ done: index, total: pages.length, page });
         const context = await pageContext(
           proxy,
@@ -727,8 +743,18 @@ export function useStudy() {
       }
     } catch (error) {
       if (!processStop.current) {
-        setProcessingError(err(error));
-        notify(err(error), true);
+        const message = err(error);
+        setProcessingErrors((current) => ({
+          docId: snapshot.id,
+          pages: {
+            ...(current?.docId === snapshot.id ? current.pages : {}),
+            [processingPage]: message,
+          },
+        }));
+        notify(
+          `${snapshot.pages.indexOf(processingPage) + 1}쪽 처리 실패: ${message}`,
+          true,
+        );
       }
     } finally {
       setProcessing(null);
@@ -1024,6 +1050,11 @@ export function useStudy() {
       parsed,
       await aspectOf(parsed, next.currentPage),
       true,
+    );
+    setProcessingErrors((errors) =>
+      errors?.docId === current.id
+        ? { docId: id, pages: remap(errors.pages, map) }
+        : errors,
     );
     setSelected([]);
     setSelection(false);

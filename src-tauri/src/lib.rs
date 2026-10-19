@@ -24,6 +24,9 @@ use tokio::{
 };
 
 type Reply = Result<Value, String>;
+// Per request, not per batch. Long page analyses and tool turns can take several
+// minutes; users can still interrupt either provider immediately.
+const AI_RESPONSE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Reply>>>>;
 
 /// Features the tutor never needs; they would also add tools beside the PDF tools.
@@ -523,7 +526,7 @@ async fn ask_ai(
         state.active.lock().await.remove(&request.request_id);
         return Err("요청을 중지했습니다.".into());
     }
-    let result = tokio::time::timeout(Duration::from_secs(240), async {
+    let result = tokio::time::timeout(AI_RESPONSE_TIMEOUT, async {
         let mut text = String::new();
         let mut final_text = String::new();
         loop {
