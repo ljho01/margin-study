@@ -78,9 +78,10 @@ function ChatTab({
     <div
       ref={sortable.ref}
       className={cn(
-        "group/tab relative flex h-8 max-w-56 min-w-28 flex-none items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground data-[dragging]:z-10 data-[dragging]:opacity-50",
-        active && "bg-accent text-foreground",
+        "chat-tab relative flex h-7 w-max max-w-[220px] min-w-[100px] flex-none rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-within:ring-2 focus-within:ring-ring/50 data-[dragging]:z-10 data-[dragging]:opacity-50",
+        active && "bg-muted text-foreground",
       )}
+      data-closable={!streaming || undefined}
       data-dragging={sortable.isDragging || undefined}
       onMouseDown={onActivate}
     >
@@ -89,13 +90,15 @@ function ChatTab({
         type="button"
         role="tab"
         aria-selected={active}
+        aria-busy={streaming || undefined}
         title={session.title}
-        className="flex min-w-0 flex-1 cursor-default touch-none items-center gap-2 pr-8 pl-2.5 text-sm outline-none"
+        className="chat-tab-handle flex min-w-0 flex-1 cursor-default touch-none items-center gap-1.5 px-2.5 text-left text-xs outline-none"
+        onClick={onActivate}
       >
         {streaming ? (
-          <Loader2 className="size-4 flex-none animate-spin" />
+          <Loader2 className="size-[11px] flex-none animate-spin" />
         ) : (
-          <MessageSquare className="size-4 flex-none" />
+          <MessageSquare className="size-3.5 flex-none" />
         )}
         <span className="truncate">{session.title}</span>
       </button>
@@ -103,14 +106,14 @@ function ChatTab({
         type="button"
         aria-label={`${session.title} 닫기`}
         disabled={streaming}
-        className="absolute right-1 grid size-6 place-items-center rounded-sm opacity-0 group-hover/tab:opacity-100 hover:bg-accent hover:text-foreground disabled:hidden"
+        className="chat-tab-close absolute top-[3px] right-[3px] z-2 grid size-[22px] place-items-center rounded text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground disabled:hidden"
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
           onClose();
         }}
       >
-        <X className="size-3.5" />
+        <X className="size-3" />
       </button>
     </div>
   );

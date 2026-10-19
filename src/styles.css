@@ -3,6 +3,33 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* The close control overlays the title, so hovering never resizes a tab. */
+.chat-tab-close {
+  opacity: 0;
+  pointer-events: none;
+}
+.chat-tab[data-closable]:is(:hover, :focus-within) .chat-tab-close {
+  opacity: 0.72;
+  pointer-events: auto;
+}
+.chat-tab .chat-tab-close:hover {
+  opacity: 1;
+}
+.chat-tab[data-closable]:is(:hover, :focus-within) .chat-tab-handle {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 38px),
+    transparent calc(100% - 22px)
+  );
+  mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 38px),
+    transparent calc(100% - 22px)
+  );
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
