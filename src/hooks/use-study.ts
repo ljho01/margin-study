@@ -1254,7 +1254,7 @@ export function useStudy() {
   };
 
   const openWorkspaceFile = async (entry: WorkspaceEntry, root = workspace) => {
-    if (!root || busy || opening.current || workspaceReading.current) return;
+    if (!root || busy || opening.current || workspaceReading.current) return false;
     workspaceReading.current = true;
     setImporting(true);
     try {
@@ -1268,8 +1268,10 @@ export function useStudy() {
         setActivePath(entry.path);
         localStorage.setItem(`margin-workspace-file:${root.id}`, entry.path);
       }
+      return opened;
     } catch (error) {
       notify(err(error), true);
+      return false;
     } finally {
       workspaceReading.current = false;
       setImporting(false);
