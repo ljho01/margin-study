@@ -78,7 +78,7 @@ function ChatTab({
     <div
       ref={sortable.ref}
       className={cn(
-        "chat-tab relative flex h-7 w-max max-w-[220px] min-w-[100px] flex-none rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-within:ring-2 focus-within:ring-ring/50 data-[dragging]:z-10 data-[dragging]:opacity-50",
+        "chat-tab relative flex h-7 w-max max-w-full min-w-[min(100px,100%)] flex-none rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-within:ring-2 focus-within:ring-ring/50 data-[dragging]:z-10 data-[dragging]:opacity-50",
         active && "bg-muted text-foreground",
       )}
       data-closable={!streaming || undefined}
