@@ -13,8 +13,14 @@ type Editor = { point: Point; id?: string; initial?: string };
 
 /** Selection and text-box outline, like Figma's. */
 const OUTLINE = "#3b82f6";
-/** Font size of new text, in pixels at the current page width. */
-const NEW_TEXT_SIZE = 16;
+/**
+ * Size of new text and pen strokes as a fraction of the page width, so a
+ * mark is the same size on the page whatever the window, zoom or monitor.
+ * These match the earlier pixel sizes on an 800px-wide page (16px text,
+ * 2.2px pen), which is about 12pt text on an A4 page.
+ */
+const NEW_TEXT_SIZE = 16 / 800;
+const PEN_SIZE = 2.2 / 800;
 
 /**
  * The box a text mark is typed in and shown in. The negative margin lines
@@ -182,7 +188,7 @@ export default function AnnotationLayer({
             type: "text",
             points: [current.point],
             color,
-            width: NEW_TEXT_SIZE / width,
+            width: NEW_TEXT_SIZE,
             text: value,
           };
       onChange([...annotations.filter((x) => x.id !== a.id), a]);
@@ -213,7 +219,7 @@ export default function AnnotationLayer({
       type: tool === "highlight" ? "highlight" : "pen",
       points: tool === "highlight" ? [p, p] : [p],
       color,
-      width: 2.2 / width,
+      width: PEN_SIZE,
     };
     draftRef.current = a;
     setDraft(a);
@@ -441,7 +447,7 @@ export default function AnnotationLayer({
   };
   const all = draft ? [...annotations, draft] : annotations;
   const editing = annotations.find((a) => a.id === editor?.id);
-  const editorSize = editing ? editing.width * width : NEW_TEXT_SIZE;
+  const editorSize = (editing ? editing.width : NEW_TEXT_SIZE) * width;
   return (
     <>
       {/* Highlights are a layer of their own, multiplied with the page as a
