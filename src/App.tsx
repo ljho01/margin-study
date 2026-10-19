@@ -114,6 +114,7 @@ import { toast } from "sonner";
 const KEYS = {
   save: "Mod+S",
   undo: "Mod+Z",
+  redo: "Mod+Shift+Z",
   open: "Mod+O",
   folder: "Mod+Shift+O",
   left: "Mod+B",
@@ -314,6 +315,11 @@ export default function App() {
     {
       hotkey: KEYS.undo,
       callback: () => s.undo(),
+      options: { ignoreInputs: true },
+    },
+    {
+      hotkey: KEYS.redo,
+      callback: () => s.redo(),
       options: { ignoreInputs: true },
     },
     { hotkey: KEYS.open, callback: openSingle },
@@ -832,7 +838,7 @@ export default function App() {
                         <IconButton
                           label="되돌리기"
                           hotkey={KEYS.undo}
-                          disabled={!s.history.length}
+                          disabled={!s.history.length || s.saving || s.restoring || busy}
                           onClick={s.undo}
                         >
                           <Undo2 />
@@ -941,6 +947,7 @@ export default function App() {
                             >
                               <div
                                 ref={s.pageSurface}
+                                inert={s.saving || s.restoring}
                                 className="relative h-fit shrink-0 border bg-white shadow-sm"
                                 style={{
                                   width: s.pageWidth,

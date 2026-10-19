@@ -23,6 +23,12 @@ import { carryThumbnails } from "@/lib/thumbnails";
 import { repairLatex } from "@/lib/latex";
 import { quoteToken, quotesAsText, quotesForAI } from "@/lib/quotes";
 import { createChatDraftStore } from "@/lib/chat-draft";
+import {
+  mapPages,
+  pageMap,
+  restoreEdit,
+  type EditSnapshot,
+} from "@/lib/edit-history";
 import type {
   Account,
   Annotation,
@@ -44,9 +50,6 @@ const PDF_OPTIONS = {
   standardFontDataUrl: "/standard_fonts/",
   wasmUrl: "/wasm/",
 };
-type HistoryEntry =
-  | { kind: "annotations"; page: number; items: Annotation[] }
-  | { kind: "pages"; pages: number[]; currentPage: number };
 const toBuffer = (bytes: Uint8Array) =>
   bytes.buffer.slice(
     bytes.byteOffset,
@@ -121,7 +124,11 @@ export function useStudy() {
   const [selected, setSelected] = useState<number[]>([]);
   const [bottomOpen, setBottomOpen] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [history, setHistory] = useState<EditSnapshot[]>([]);
+  const [future, setFuture] = useState<EditSnapshot[]>([]);
+  const [restoring, setRestoring] = useState(false);
+  const editLock = useRef(false);
+  const pageIds = useRef<number[]>([]);
   const [tab, setTab] = useState("explanation");
   const [translate, setTranslate] = useState(
     () => localStorage.getItem("margin-translate") !== "false",
@@ -406,8 +413,10 @@ export function useStudy() {
     // Known before the switch so the page box is sized once for the new file.
     setAspect(pageAspect);
     setDoc(chats.withSessions(next));
-    setHistory([]);
     if (!keepChats) {
+      pageIds.current = Array.from({ length: next.totalPages }, (_, i) => i + 1);
+      setHistory([]);
+      setFuture([]);
       setQueue([]);
       setPaused([]);
     }
@@ -435,20 +444,26 @@ export function useStudy() {
     buffer: ArrayBuffer,
     name: string,
     source?: DocumentSource,
+    storedId?: string,
   ) => {
-    if (opening.current || busy) return false;
+    if (opening.current || busy || editLock.current) return false;
     setQuestion("");
     opening.current = true;
     setImporting(true);
     try {
       if (buffer.byteLength > 180 * 1024 * 1024)
         throw new Error("180 MB 이하의 PDF를 열어 주세요.");
-      const id = await storage.fingerprint(buffer);
-      const file = await readPdf(buffer);
-      const { task, parsed } = await loadDisplay(file.display);
+      const id = storedId ?? (await storage.fingerprint(buffer));
       await saveChain.current;
       const stored = await storage.loadDocument(id);
-      await storage.storePDF(id, buffer);
+      // Undo can restore pages that no longer exist in the saved file. Its
+      // dirty draft keeps the complete editing source until the next save.
+      const editingBytes = stored?.dirty
+        ? (await storage.loadPDF(id)) ?? buffer
+        : buffer;
+      const file = await readPdf(editingBytes);
+      const { task, parsed } = await loadDisplay(file.display);
+      await storage.storePDF(id, editingBytes);
       // Records from before file saving existed keep their edits as unsaved changes.
       const legacyEdits =
         stored?.dirty === undefined &&
@@ -533,45 +548,79 @@ export function useStudy() {
       ]);
       if (!data || !state)
         throw new Error("저장된 PDF를 찾지 못했습니다. 다시 가져와 주세요.");
-      await openBytes(data, state.name);
+      await openBytes(data, state.name, state.source, id);
     } catch (e) {
       notify(err(e), true);
     }
   };
+  const snapshot = (document: StudyDocument): EditSnapshot => ({
+    document,
+    bytes: bytes!,
+    pageIds: pageIds.current,
+  });
+  const rememberEdit = () => {
+    if (!doc || !bytes || editLock.current) return false;
+    const before = snapshot(doc);
+    setHistory((prev) => [...prev.slice(-99), before]);
+    setFuture([]);
+    return true;
+  };
   const changeAnnotations = (items: Annotation[]) => {
-    if (!doc) return;
-    setHistory((prev) => [
-      ...prev.slice(-99),
-      { kind: "annotations", page: doc.currentPage, items: annotations },
-    ]);
+    if (!rememberEdit()) return;
     update((d) => ({
       ...d,
       dirty: true,
       annotations: { ...d.annotations, [d.currentPage]: items },
     }));
   };
-  const undo = () => {
-    const last = history.at(-1);
-    if (!last) return;
-    setHistory((prev) => prev.slice(0, -1));
-    update((d) =>
-      last.kind === "annotations"
-        ? {
-            ...d,
-            dirty: true,
-            currentPage: d.pages.includes(last.page)
-              ? last.page
-              : d.currentPage,
-            annotations: { ...d.annotations, [last.page]: last.items },
-          }
-        : {
-            ...d,
-            dirty: true,
-            pages: last.pages,
-            currentPage: last.currentPage,
-          },
-    );
+  const travelHistory = async (redo = false) => {
+    const last = (redo ? future : history).at(-1);
+    const current = docRef.current;
+    if (!last || !current || !bytes || editLock.current || busy || opening.current)
+      return;
+    editLock.current = true;
+    setRestoring(true);
+    let replacement: Awaited<ReturnType<typeof loadDisplay>> | undefined;
+    try {
+      if (last.bytes !== bytes) replacement = await loadDisplay(last.bytes);
+      await saveChain.current;
+      // The id still fingerprints the file on disk for conflict detection;
+      // only the local editing source changes when crossing a save boundary.
+      if (replacement) await storage.storePDF(current.id, last.bytes);
+      const latest = docRef.current!;
+      const before = snapshot(latest);
+      const next = restoreEdit(latest, pageIds.current, last);
+      const map = pageMap(pageIds.current, last.pageIds);
+      if (replacement) {
+        if (pdf)
+          carryThumbnails(pdf, replacement.parsed,
+            new Map([...map].map(([from, to]) => [to, from])));
+        const pageAspect = await aspectOf(replacement.parsed, next.currentPage);
+        showDocument(
+          next, last.bytes, replacement.task, replacement.parsed, pageAspect, true,
+        );
+      } else setDoc(next);
+      pageIds.current = last.pageIds;
+      setProcessingErrors((errors) =>
+        errors?.docId === current.id
+          ? { ...errors, pages: mapPages(errors.pages, map) }
+          : errors,
+      );
+      (redo ? setFuture : setHistory)((items) => items.slice(0, -1));
+      (redo ? setHistory : setFuture)((items) => [...items.slice(-99), before]);
+      setSelected([]);
+      setSelection(false);
+      setSearchResults(null);
+    } catch (error) {
+      if (replacement) await replacement.task.destroy().catch(() => {});
+      notify(`되돌리기 실패: ${err(error)}`, true);
+    } finally {
+      editLock.current = false;
+      setRestoring(false);
+    }
   };
+  const undo = () => void travelHistory();
+  const redo = () => void travelHistory(true);
   const navigate = useCallback(
     (delta: number) => {
       const d = docRef.current;
@@ -646,6 +695,7 @@ export function useStudy() {
     }
   };
   const requireAI = () => {
+    if (editLock.current) return false;
     if (!accountForModel || !model) {
       setSettingsOpen(true);
       return false;
@@ -1034,7 +1084,11 @@ export function useStudy() {
         new Map(current.pages.map((page, index) => [index + 1, page])),
       );
     viewKeys.current.set(id, viewKeys.current.get(current.id) ?? current.id);
-    if (id !== current.id && current.pages.every((page, i) => page === i + 1))
+    if (
+      id !== current.id &&
+      !sameDoc(current, id) &&
+      current.pages.every((page, i) => page === i + 1)
+    )
       continued.current.set(id, current.id);
     setQueue((items) =>
       items.map((q) => (q.docId === current.id ? { ...q, docId: id } : q)),
@@ -1051,6 +1105,7 @@ export function useStudy() {
       await aspectOf(parsed, next.currentPage),
       true,
     );
+    pageIds.current = current.pages.map((page) => pageIds.current[page - 1]);
     setProcessingErrors((errors) =>
       errors?.docId === current.id
         ? { docId: id, pages: remap(errors.pages, map) }
@@ -1067,11 +1122,13 @@ export function useStudy() {
       !current ||
       !bytes ||
       saving ||
+      editLock.current ||
       busy ||
       (!current.dirty && current.source)
     )
       return;
     setSaving(true);
+    editLock.current = true;
     try {
       const data = await writePdf(bytes, current);
       let target = current.source;
@@ -1092,6 +1149,7 @@ export function useStudy() {
     } catch (error) {
       notify(err(error), true);
     } finally {
+      editLock.current = false;
       setSaving(false);
     }
   };
@@ -1117,10 +1175,7 @@ export function useStudy() {
     const targets = selected.length ? selected : [doc.currentPage];
     const remaining = doc.pages.filter((page) => !targets.includes(page));
     if (!remaining.length) return;
-    setHistory((prev) => [
-      ...prev.slice(-99),
-      { kind: "pages", pages: doc.pages, currentPage: doc.currentPage },
-    ]);
+    if (!rememberEdit()) return;
     const index = doc.pages.indexOf(doc.currentPage);
     update((d) => ({
       ...d,
@@ -1259,7 +1314,7 @@ export function useStudy() {
     });
   };
   const activateWorkspace = async (root: Workspace) => {
-    if (busy) return;
+    if (busy || editLock.current) return;
     await saveChain.current;
     setDoc(null);
     setBytes(null);
@@ -1444,8 +1499,10 @@ export function useStudy() {
     bottomOpen,
     setBottomOpen,
     saving,
+    restoring,
     history,
     undo,
+    redo,
     saveDocument,
     pageSurface,
     highlightSelection,
