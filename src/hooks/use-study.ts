@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type SetStateAction,
 } from "react";
 import { pdfjs } from "react-pdf";
 import type { PDFDocumentProxy, PDFDocumentLoadingTask } from "pdfjs-dist";
@@ -23,8 +24,8 @@ import { carryThumbnails } from "@/lib/thumbnails";
 import { repairLatex } from "@/lib/latex";
 import { quoteToken, quotesAsText, quotesForAI } from "@/lib/quotes";
 import { createChatDraftStore } from "@/lib/chat-draft";
+import { DocumentSession } from "@/lib/document-session";
 import {
-  mapPages,
   pageMap,
   restoreEdit,
   type EditSnapshot,
@@ -68,11 +69,24 @@ const err = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
 export function useStudy() {
-  const [doc, setDoc] = useState<StudyDocument | null>(null);
+  const [doc, setDocState] = useState<StudyDocument | null>(null);
   const docRef = useRef(doc);
-  docRef.current = doc;
+  // Async saves and AI deltas always merge with the latest document, including
+  // changes React has batched but has not rendered yet.
+  const setDoc = useCallback((value: SetStateAction<StudyDocument | null>) => {
+    const next = typeof value === "function" ? value(docRef.current) : value;
+    docRef.current = next;
+    setDocState(next);
+  }, []);
+  const documentSession = useRef(new DocumentSession());
   const [bytes, setBytes] = useState<ArrayBuffer | null>(null);
-  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const [pdf, setPdfState] = useState<PDFDocumentProxy | null>(null);
+  const pdfRef = useRef(pdf);
+  const setPdf = useCallback((value: SetStateAction<PDFDocumentProxy | null>) => {
+    const next = typeof value === "function" ? value(pdfRef.current) : value;
+    pdfRef.current = next;
+    setPdfState(next);
+  }, []);
   const [library, setLibrary] = useState<LibraryItem[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -128,7 +142,6 @@ export function useStudy() {
   const [future, setFuture] = useState<EditSnapshot[]>([]);
   const [restoring, setRestoring] = useState(false);
   const editLock = useRef(false);
-  const pageIds = useRef<number[]>([]);
   const [tab, setTab] = useState("explanation");
   const [translate, setTranslate] = useState(
     () => localStorage.getItem("margin-translate") !== "false",
@@ -139,12 +152,12 @@ export function useStudy() {
     page: number;
   } | null>(null);
   const [processingErrors, setProcessingErrors] = useState<{
-    docId: string;
+    session: string;
     pages: Record<number, string>;
   } | null>(null);
   const processingError =
-    doc && processingErrors?.docId === doc.id
-      ? (processingErrors.pages[doc.currentPage] ?? "")
+    doc && processingErrors?.session === documentSession.current.key
+      ? (processingErrors.pages[documentSession.current.ids[doc.currentPage - 1]] ?? "")
       : "";
   /** Chats answering right now: session id → id of the answer being written. */
   const [running, setRunning] = useState<Record<string, string>>({});
@@ -165,6 +178,7 @@ export function useStudy() {
   const saveChain = useRef(Promise.resolve());
   const processStop = useRef(false);
   const processRequest = useRef<string | null>(null);
+  const analysisActive = useRef(false);
   /** Chats that started answering, updated at once (state lags a render). */
   const answering = useRef(new Set<string>());
   /** Backend request of each running answer; each run gets a new one. */
@@ -174,27 +188,33 @@ export function useStudy() {
   const opening = useRef(false);
   const loadingTask = useRef<PDFDocumentLoadingTask | null>(null);
   const retiredTasks = useRef(new Set<PDFDocumentLoadingTask>());
-  const pageDisplayed = useCallback((visible: PDFDocumentProxy) => {
+  const displayedTask = useRef<PDFDocumentLoadingTask | null>(null);
+  const pdfUsers = useRef(new Map<PDFDocumentLoadingTask, number>());
+  const collectTasks = useCallback(() => {
     for (const task of retiredTasks.current) {
-      if (task === visible.loadingTask || task === loadingTask.current) continue;
+      if (task === displayedTask.current || task === loadingTask.current || pdfUsers.current.has(task))
+        continue;
       retiredTasks.current.delete(task);
       void task.destroy().catch(() => {});
     }
   }, []);
+  const retainPdf = (proxy: PDFDocumentProxy) => {
+    const task = proxy.loadingTask;
+    pdfUsers.current.set(task, (pdfUsers.current.get(task) ?? 0) + 1);
+    return () => {
+      const left = (pdfUsers.current.get(task) ?? 1) - 1;
+      if (left) pdfUsers.current.set(task, left);
+      else pdfUsers.current.delete(task);
+      collectTasks();
+    };
+  };
+  const pageDisplayed = useCallback((visible: PDFDocumentProxy) => {
+    displayedTask.current = visible.loadingTask;
+    collectTasks();
+  }, [collectTasks]);
   // Saving re-reads the file under a new id; views of the document (the page
   // list) keep the key they were opened with so they are not rebuilt.
   const viewKeys = useRef(new Map<string, string>());
-  /**
-   * A saved file continues the document it was saved from (new id -> old id)
-   * when its pages kept their numbers, so answers and page processing that
-   * were running keep writing into it.
-   */
-  const continued = useRef(new Map<string, string>());
-  const sameDoc = (d: StudyDocument, id: string) => {
-    for (let at: string | undefined = d.id; at; at = continued.current.get(at))
-      if (at === id) return true;
-    return false;
-  };
   const pageSurface = useRef<HTMLDivElement>(null);
   const ocrRunning = useRef(new Set<string>());
   const notify = useCallback((text: string, error = false) => {
@@ -265,16 +285,18 @@ export function useStudy() {
       dispose?.();
     };
   }, [refreshAccount, refreshLibrary]);
-  useEffect(() => {
-    if (!doc) return;
-    const snapshot = doc;
-    saveChain.current = saveChain.current
+  const persistDocument = useCallback((snapshot: StudyDocument) => {
+    const pending = saveChain.current
       .catch(() => {})
-      .then(async () => {
-        await storage.saveDocument(snapshot);
-      })
+      .then(() => storage.saveDocument(snapshot));
+    saveChain.current = pending
       .catch((e) => notify(`저장 실패: ${err(e)}`, true));
-  }, [doc, notify]);
+    return pending;
+  }, [notify]);
+  useEffect(() => {
+    if (!doc || docRef.current !== doc) return;
+    void persistDocument(doc);
+  }, [doc, persistDocument]);
   useEffect(() => {
     localStorage.setItem("margin-model", model);
   }, [model]);
@@ -359,6 +381,7 @@ export function useStudy() {
           (!translate || doc.analyses[p].translationRequested),
       ).length
     : 0;
+  const missingCount = doc?.pages.filter((page) => !doc.analyses[page]).length ?? 0;
   // 100% fits the whole page inside the reader, inset by its 16px padding.
   const fitWidth = Math.max(
     240,
@@ -369,9 +392,8 @@ export function useStudy() {
   );
   const pageWidth = Math.floor(fitWidth * zoom);
   const pageHeight = Math.floor(pageWidth / aspect);
-  // Opening or saving another file waits for every running request; page
-  // processing and chats run alongside each other, and each chat answers one
-  // question at a time.
+  // Opening another document waits for AI; editing and saving this document
+  // remain available while its requests keep their original page snapshot.
   const busy = !!processing || Object.keys(running).length > 0;
   const chatBusy = !!doc?.activeChat && !!running[doc.activeChat];
   const queuePaused = !!doc?.activeChat && paused.includes(doc.activeChat);
@@ -412,14 +434,15 @@ export function useStudy() {
     setBytes(display);
     // Known before the switch so the page box is sized once for the new file.
     setAspect(pageAspect);
-    setDoc(chats.withSessions(next));
+    const shown = chats.withSessions(next);
     if (!keepChats) {
-      pageIds.current = Array.from({ length: next.totalPages }, (_, i) => i + 1);
+      documentSession.current = new DocumentSession(shown);
       setHistory([]);
       setFuture([]);
       setQueue([]);
       setPaused([]);
     }
+    setDoc(shown);
   };
   const aspectOf = async (parsed: PDFDocumentProxy, page: number) => {
     try {
@@ -556,7 +579,7 @@ export function useStudy() {
   const snapshot = (document: StudyDocument): EditSnapshot => ({
     document,
     bytes: bytes!,
-    pageIds: pageIds.current,
+    pageIds: documentSession.current.ids,
   });
   const rememberEdit = () => {
     if (!doc || !bytes || editLock.current) return false;
@@ -576,10 +599,11 @@ export function useStudy() {
   const travelHistory = async (redo = false) => {
     const last = (redo ? future : history).at(-1);
     const current = docRef.current;
-    if (!last || !current || !bytes || editLock.current || busy || opening.current)
+    if (!last || !current || !bytes || editLock.current || opening.current)
       return;
     editLock.current = true;
     setRestoring(true);
+    const session = documentSession.current;
     let replacement: Awaited<ReturnType<typeof loadDisplay>> | undefined;
     try {
       if (last.bytes !== bytes) replacement = await loadDisplay(last.bytes);
@@ -587,25 +611,23 @@ export function useStudy() {
       // The id still fingerprints the file on disk for conflict detection;
       // only the local editing source changes when crossing a save boundary.
       if (replacement) await storage.storePDF(current.id, last.bytes);
+      const pageAspect = replacement
+        ? await aspectOf(replacement.parsed, last.document.currentPage)
+        : aspect;
       const latest = docRef.current!;
       const before = snapshot(latest);
-      const next = restoreEdit(latest, pageIds.current, last);
-      const map = pageMap(pageIds.current, last.pageIds);
+      session.capture(latest);
+      const next = session.project(restoreEdit(latest, session.ids, last), last.pageIds);
+      const map = pageMap(session.ids, last.pageIds);
+      session.ids = last.pageIds;
       if (replacement) {
         if (pdf)
           carryThumbnails(pdf, replacement.parsed,
             new Map([...map].map(([from, to]) => [to, from])));
-        const pageAspect = await aspectOf(replacement.parsed, next.currentPage);
         showDocument(
           next, last.bytes, replacement.task, replacement.parsed, pageAspect, true,
         );
       } else setDoc(next);
-      pageIds.current = last.pageIds;
-      setProcessingErrors((errors) =>
-        errors?.docId === current.id
-          ? { ...errors, pages: mapPages(errors.pages, map) }
-          : errors,
-      );
       (redo ? setFuture : setHistory)((items) => items.slice(0, -1));
       (redo ? setHistory : setFuture)((items) => [...items.slice(-99), before]);
       setSelected([]);
@@ -671,26 +693,33 @@ export function useStudy() {
   };
   const ensureOcr = async (page: number) => {
     const current = docRef.current;
-    const key = current?.id + ":" + page;
+    const session = documentSession.current;
+    const identity = session.ids[page - 1];
+    const key = session.key + ":" + identity;
     if (
       !ai.desktop ||
       !current ||
       !pdf ||
+      pdf !== pdfRef.current ||
+      identity === undefined ||
       current.ocr?.[page] ||
       ocrRunning.current.has(key)
     )
       return;
     ocrRunning.current.add(key);
+    const release = retainPdf(pdf);
     try {
       const lines = await files.recognizeText(await pageImage(pdf, page));
+      session.ocr.set(identity, lines);
       setDoc((d) =>
-        d && d.id === current.id
-          ? { ...d, ocr: { ...d.ocr, [page]: lines } }
+        d && documentSession.current === session
+          ? session.project(d)
           : d,
       );
     } catch (error) {
       notify(err(error), true);
     } finally {
+      release();
       ocrRunning.current.delete(key);
     }
   };
@@ -706,15 +735,18 @@ export function useStudy() {
     all: boolean,
     force = false,
     withTranslation = translate,
+    missingOnly = false,
   ) => {
-    if (!doc || !pdf || processing || !requireAI()) return;
-    const snapshot = doc,
-      proxy = pdf;
+    const snapshot = docRef.current;
+    const proxy = pdfRef.current;
+    if (!snapshot || !proxy || analysisActive.current || !requireAI()) return;
+    const session = documentSession.current;
+    const identities = session.ids;
     const pages = all
       ? snapshot.pages.filter(
           (p) =>
             !snapshot.analyses[p] ||
-            (withTranslation && !snapshot.analyses[p].translationRequested),
+            (!missingOnly && withTranslation && !snapshot.analyses[p].translationRequested),
         )
       : [snapshot.currentPage];
     if (!pages.length) {
@@ -725,22 +757,33 @@ export function useStudy() {
       return;
     }
     processStop.current = false;
+    analysisActive.current = true;
+    const release = retainPdf(proxy);
     setProcessing({ done: 0, total: pages.length, page: pages[0] });
     let processingPage = pages[0];
+    let done = 0;
     try {
       for (let index = 0; index < pages.length; index++) {
         if (processStop.current) break;
         const page = pages[index];
+        const identity = identities[page - 1];
+        const current = docRef.current;
+        if (documentSession.current !== session || !current) break;
+        const visible = session.visiblePage(identity, current);
+        if (visible === undefined) continue;
         processingPage = page;
         // Retrying one page must not erase errors belonging to other pages.
         setProcessingErrors((current) => {
-          if (current?.docId !== snapshot.id || !current.pages[page])
+          if (current?.session !== session.key || !current.pages[identity])
             return current;
           const next = { ...current.pages };
-          delete next[page];
-          return { docId: snapshot.id, pages: next };
+          delete next[identity];
+          return { session: session.key, pages: next };
         });
-        setProcessing({ done: index, total: pages.length, page });
+        const total = done + pages.slice(index).filter((p) =>
+          session.visiblePage(identities[p - 1], current) !== undefined,
+        ).length;
+        setProcessing({ done, total, page: visible });
         const context = await pageContext(
           proxy,
           page,
@@ -754,7 +797,7 @@ export function useStudy() {
           ...context,
           prompt: ai.analysisPrompt(
             snapshot.name,
-            page,
+            snapshot.pages.indexOf(page) + 1,
             context.text,
             withTranslation,
           ),
@@ -784,34 +827,41 @@ export function useStudy() {
           model,
           createdAt: new Date().toISOString(),
         };
+        session.analyses.set(identity, value);
         update((d) =>
-          sameDoc(d, snapshot.id)
-            ? { ...d, analyses: { ...d.analyses, [page]: value } }
+          documentSession.current === session
+            ? session.project(d)
             : d,
         );
-        setProcessing({ done: index + 1, total: pages.length, page });
+        done++;
+        setProcessing({ done, total, page: session.page(identity) ?? visible });
       }
     } catch (error) {
-      if (!processStop.current) {
+      if (!processStop.current && documentSession.current === session) {
         const message = err(error);
         setProcessingErrors((current) => ({
-          docId: snapshot.id,
+          session: session.key,
           pages: {
-            ...(current?.docId === snapshot.id ? current.pages : {}),
-            [processingPage]: message,
+            ...(current?.session === session.key ? current.pages : {}),
+            [identities[processingPage - 1]]: message,
           },
         }));
-        notify(
-          `${snapshot.pages.indexOf(processingPage) + 1}쪽 처리 실패: ${message}`,
-          true,
-        );
+        const current = docRef.current;
+        const page = current
+          ? session.visiblePage(identities[processingPage - 1], current)
+          : undefined;
+        if (page !== undefined && current)
+          notify(`${current.pages.indexOf(page) + 1}쪽 처리 실패: ${message}`, true);
       }
     } finally {
       setProcessing(null);
       processRequest.current = null;
+      analysisActive.current = false;
+      release();
       void refreshLibrary();
     }
   };
+  const runMissingAnalyses = () => runAnalysis(true, false, translate, true);
   const stopProcessing = async () => {
     processStop.current = true;
     if (processRequest.current)
@@ -830,15 +880,17 @@ export function useStudy() {
     text: string,
     resume?: ChatMessage,
   ) => {
-    if (!doc || !pdf || answering.current.has(sessionId) || !requireAI())
+    const snapshot = docRef.current;
+    const proxy = pdfRef.current;
+    if (!snapshot || !proxy || answering.current.has(sessionId) || !requireAI())
       return;
-    const snapshot = doc;
-    const session = doc.sessions?.find((x) => x.id === sessionId);
+    const documentRun = documentSession.current;
+    const session = snapshot.sessions?.find((x) => x.id === sessionId);
     if (!session) return;
     const page =
       resume?.page && snapshot.pages.includes(resume.page)
         ? resume.page
-        : doc.currentPage;
+        : snapshot.currentPage;
     const id = resume?.id ?? crypto.randomUUID();
     const base = resume?.text ?? "";
     // Without any written text there is nothing to continue: ask the
@@ -855,7 +907,7 @@ export function useStudy() {
       d: StudyDocument,
       fn: (x: ChatSession) => ChatSession,
     ): StudyDocument =>
-      sameDoc(d, snapshot.id)
+      documentSession.current === documentRun
         ? {
             ...d,
             sessions: d.sessions?.map((x) => (x.id === sessionId ? fn(x) : x)),
@@ -879,7 +931,11 @@ export function useStudy() {
         })),
       );
     if (resume) patch(base);
-    else
+    else {
+      const questionId = crypto.randomUUID();
+      const identity = documentRun.ids[page - 1];
+      documentRun.messagePages.set(questionId, identity);
+      documentRun.messagePages.set(id, identity);
       update((d) =>
         editSession(d, (x) => ({
           ...x,
@@ -889,13 +945,15 @@ export function useStudy() {
               : x.title,
           messages: [
             ...x.messages,
-            { id: crypto.randomUUID(), role: "user", text, page },
+            { id: questionId, role: "user", text, page },
             { id, role: "assistant", text: "", page },
           ],
           updatedAt: new Date().toISOString(),
         })),
       );
+    }
     let latest = base;
+    const release = retainPdf(proxy);
     try {
       const current = snapshot.pages.indexOf(page) + 1;
       // Attached passages go to the model as quotations with the page
@@ -922,7 +980,7 @@ export function useStudy() {
           latest = base + value;
           patch(latest);
         },
-        onTool: pageTools(snapshot, pdf, current),
+        onTool: pageTools(snapshot, proxy, current),
       });
       patch(base + answer);
     } catch (e) {
@@ -933,6 +991,7 @@ export function useStudy() {
         patch(latest, { stopped: true });
       } else patch(err(e), { error: true });
     } finally {
+      release();
       answering.current.delete(sessionId);
       chatCalls.current.delete(sessionId);
       setRunning((r) => {
@@ -1012,7 +1071,7 @@ export function useStudy() {
   }, [queue, paused]);
   // Each chat sends its next question once its own answer is done.
   useEffect(() => {
-    if (!doc || !pdf || !accountForModel || !model) return;
+    if (!doc || !pdf || !accountForModel || !model || editLock.current) return;
     const seen = new Set<string>();
     const next: typeof queue = [];
     for (const q of queue) {
@@ -1027,7 +1086,7 @@ export function useStudy() {
     for (const q of next) void runChat(q.sessionId, q.text);
     // runChat reads the latest document from this render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue, paused, running, doc?.id, pdf, accountForModel, model]);
+  }, [queue, paused, running, doc?.id, pdf, accountForModel, model, saving, restoring]);
   const askPath = async (name: string) => {
     const { save } = await import("@tauri-apps/plugin-dialog");
     return save({
@@ -1050,67 +1109,50 @@ export function useStudy() {
     data: Uint8Array,
     source: DocumentSource,
   ) => {
+    const session = documentSession.current;
+    const identities = current.pages.map((page) => session.ids[page - 1]);
     const buffer = toBuffer(data);
     const id = await storage.fingerprint(buffer);
     const map = new Map(current.pages.map((page, index) => [page, index + 1]));
-    const next: StudyDocument = {
-      ...current,
+    const file = await readPdf(buffer);
+    const { task, parsed } = await loadDisplay(file.display);
+    if (pdf)
+      carryThumbnails(pdf, parsed,
+        new Map(current.pages.map((page, index) => [index + 1, page])));
+    await saveChain.current;
+    await storage.storePDF(id, buffer);
+    const pageAspect = await aspectOf(parsed, map.get(docRef.current!.currentPage) ?? 1);
+    // AI may have streamed an answer or finished a page during every await
+    // above. Adopt only the saved edits; merge metadata at the commit point.
+    const latest = docRef.current!;
+    session.capture(latest);
+    const next = session.project({
+      ...latest,
       id,
       size: buffer.byteLength,
       totalPages: current.pages.length,
       pages: current.pages.map((_, index) => index + 1),
-      currentPage: map.get(current.currentPage) ?? 1,
+      currentPage: map.get(latest.currentPage) ?? 1,
       annotations: remap(current.annotations, map),
-      analyses: remap(current.analyses, map),
-      sessions: current.sessions?.map((x) => ({
-        ...x,
-        messages: x.messages.map((m) =>
-          m.page ? { ...m, page: map.get(m.page) ?? m.page } : m,
-        ),
-      })),
-      ocr: remap(current.ocr, map),
+      analyses: {},
+      ocr: {},
       dirty: false,
       source,
       updatedAt: new Date().toISOString(),
-    };
-    const file = await readPdf(buffer);
-    const { task, parsed } = await loadDisplay(file.display);
-    // The saved file shows the same pages, so their thumbnails carry over and
-    // the page list switches files without redrawing.
-    if (pdf)
-      carryThumbnails(
-        pdf,
-        parsed,
-        new Map(current.pages.map((page, index) => [index + 1, page])),
-      );
+    }, identities);
     viewKeys.current.set(id, viewKeys.current.get(current.id) ?? current.id);
-    if (
-      id !== current.id &&
-      !sameDoc(current, id) &&
-      current.pages.every((page, i) => page === i + 1)
-    )
-      continued.current.set(id, current.id);
+    session.ids = identities;
+    showDocument(next, file.display, task, parsed, pageAspect, true);
     setQueue((items) =>
       items.map((q) => (q.docId === current.id ? { ...q, docId: id } : q)),
     );
-    await saveChain.current;
-    await storage.saveDocument(next);
-    await storage.storePDF(id, buffer);
-    if (id !== current.id) await storage.deleteDocument(current.id);
-    showDocument(
-      next,
-      file.display,
-      task,
-      parsed,
-      await aspectOf(parsed, next.currentPage),
-      true,
-    );
-    pageIds.current = current.pages.map((page) => pageIds.current[page - 1]);
-    setProcessingErrors((errors) =>
-      errors?.docId === current.id
-        ? { docId: id, pages: remap(errors.pages, map) }
-        : errors,
-    );
+    // Queue this write synchronously before a later AI delta can persist. Old
+    // document effects are ignored once their file id has been superseded.
+    await persistDocument(next);
+    if (id !== current.id) {
+      saveChain.current = saveChain.current.then(() => storage.deleteDocument(current.id));
+      await saveChain.current;
+    }
     setSelected([]);
     setSelection(false);
     setSearchResults(null);
@@ -1123,7 +1165,6 @@ export function useStudy() {
       !bytes ||
       saving ||
       editLock.current ||
-      busy ||
       (!current.dirty && current.source)
     )
       return;
@@ -1189,26 +1230,36 @@ export function useStudy() {
     setSelection(false);
   };
   const runSearch = async () => {
-    if (!pdf || !doc || !search.trim()) {
+    const source = docRef.current;
+    const proxy = pdfRef.current;
+    if (!proxy || !source || !search.trim()) {
       setSearchResults(null);
       return;
     }
+    const session = documentSession.current;
+    const identities = session.ids;
+    const release = retainPdf(proxy);
     setSearchBusy(true);
     try {
       const found: number[] = [];
-      for (const n of doc.pages) {
-        const p = await pdf.getPage(n);
+      for (const n of source.pages) {
+        const p = await proxy.getPage(n);
         const content = await p.getTextContent();
         const text = content.items
           .map((i) => ("str" in i ? i.str : ""))
           .join(" ");
         if (text.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
-          found.push(n);
+          found.push(identities[n - 1]);
       }
-      setSearchResults(found);
+      if (documentSession.current === session && docRef.current)
+        setSearchResults(found.flatMap((id) => {
+          const page = session.visiblePage(id, docRef.current!);
+          return page === undefined ? [] : [page];
+        }));
     } catch (e) {
       notify(err(e), true);
     } finally {
+      release();
       setSearchBusy(false);
     }
   };
@@ -1466,6 +1517,7 @@ export function useStudy() {
     closeChat,
     moveChat,
     doneCount,
+    missingCount,
     pageWidth,
     pageHeight,
     busy,
@@ -1475,6 +1527,7 @@ export function useStudy() {
     changeAnnotations,
     navigate,
     runAnalysis,
+    runMissingAnalyses,
     stopProcessing,
     sendChat,
     exportFile,

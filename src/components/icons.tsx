@@ -47,6 +47,7 @@ export const Loader2Icon = icon(H.Loading03Icon);
 export const LogOut = icon(H.Logout03Icon);
 export const MessageSquare = icon(H.BubbleChatIcon);
 export const Monitor = icon(H.ComputerIcon);
+export const MoreHorizontal = icon(H.MoreHorizontalIcon);
 export const Moon = icon(H.Moon02Icon);
 export const MousePointer2 = icon(H.Cursor01Icon);
 export const OctagonXIcon = icon(H.CancelCircleIcon);

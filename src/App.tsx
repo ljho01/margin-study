@@ -428,7 +428,7 @@ export default function App() {
             <IconButton
               label="저장"
               hotkey={KEYS.save}
-              disabled={s.saving || busy || (!doc.dirty && !!doc.source)}
+              disabled={s.saving || s.restoring || (!doc.dirty && !!doc.source)}
               onClick={() => void s.saveDocument()}
             >
               {s.saving ? <Loader2 className="animate-spin" /> : <Save />}
@@ -838,7 +838,7 @@ export default function App() {
                         <IconButton
                           label="되돌리기"
                           hotkey={KEYS.undo}
-                          disabled={!s.history.length || s.saving || s.restoring || busy}
+                          disabled={!s.history.length || s.saving || s.restoring}
                           onClick={s.undo}
                         >
                           <Undo2 />

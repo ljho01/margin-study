@@ -10,6 +10,12 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -23,7 +29,7 @@ import {
 } from "@/components/ui/tooltip";
 import Markdown from "@/components/Markdown";
 import { cn } from "@/lib/utils";
-import { RefreshCw, Square } from "@/components/icons";
+import { MoreHorizontal, RefreshCw, Square } from "@/components/icons";
 import type { useStudy } from "@/hooks/use-study";
 
 type Study = ReturnType<typeof useStudy>;
@@ -113,7 +119,6 @@ function Fallback({
 export default function AnalysisPanel({ s }: { s: Study }) {
   const { doc, analysis, processing } = s;
   if (!doc) return null;
-  const allDone = s.doneCount === doc.pages.length;
   const translate = (all: boolean) => {
     s.setTranslate(true);
     void s.runAnalysis(all, !all, true);
@@ -161,10 +166,12 @@ export default function AnalysisPanel({ s }: { s: Study }) {
         <Button
           size="sm"
           variant="secondary"
-          disabled={allDone}
-          onClick={() => void s.runAnalysis(true)}
+          disabled={!s.missingCount}
+          onClick={() => void s.runMissingAnalyses()}
         >
-          문서 전체 처리
+          {s.missingCount < doc.pages.length
+            ? `미처리 ${s.missingCount}페이지 처리`
+            : "문서 전체 처리"}
         </Button>
       </Fallback>
     );
@@ -201,19 +208,19 @@ export default function AnalysisPanel({ s }: { s: Study }) {
         <div className="p-4">
           {s.tab === "explanation" && (
             <>
-              <h2 className={cn("mb-4 text-base font-semibold", processing ? "pr-36" : "pr-28")}>
+              <h2 className={cn("mb-4 text-base font-semibold", processing ? "pr-52" : "pr-40")}>
                 {analysis.title}
               </h2>
               <Markdown>{analysis.explanation}</Markdown>
             </>
           )}
           {s.tab === "translation" && (
-            <div className={processing ? "pr-36" : "pr-28"}>
+            <div className={processing ? "pr-52" : "pr-40"}>
               <Markdown>{analysis.translation}</Markdown>
             </div>
           )}
           {s.tab === "points" && (
-            <ul className={cn("list-disc space-y-3 pl-5", processing ? "pr-36" : "pr-28")}>
+            <ul className={cn("list-disc space-y-3 pl-5", processing ? "pr-52" : "pr-40")}>
               {analysis.keyPoints.map((point, index) => (
                 <li key={index}>
                   <Markdown>{point}</Markdown>
@@ -266,6 +273,32 @@ export default function AnalysisPanel({ s }: { s: Study }) {
               <SelectItem value="points">핵심</SelectItem>
             </SelectContent>
           </Select>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="페이지 처리 옵션"
+                className="bg-background text-muted-foreground"
+              >
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                disabled={!!processing || !s.missingCount}
+                onSelect={() => void s.runMissingAnalyses()}
+              >
+                미처리 페이지 모두 처리 ({s.missingCount})
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!!processing}
+                onSelect={() => void s.runAnalysis(false, true)}
+              >
+                이 페이지 다시 처리
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       )}
       {body}
