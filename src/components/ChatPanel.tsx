@@ -168,7 +168,7 @@ function StickyQuestion({
         data-sticky-question
         data-pinned={stuck}
         className={cn(
-          "sticky top-1 z-10 -mx-4 bg-background px-4 pb-2 before:absolute before:inset-x-0 before:-top-1 before:h-1 before:bg-background",
+          "sticky top-1 z-10 -mx-4 bg-background px-4 before:absolute before:inset-x-0 before:-top-1 before:h-1 before:bg-background",
           stuck && "cursor-pointer [&_*]:cursor-pointer",
         )}
         role={stuck ? "button" : undefined}
