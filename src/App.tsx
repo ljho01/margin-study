@@ -100,6 +100,7 @@ import {
 } from "@/components/ui/popover";
 import { IconButton } from "@/components/IconButton";
 import OcrLayer from "@/components/OcrLayer";
+import PdfEraserLayer from "@/components/PdfEraserLayer";
 import PageThumbnailList from "@/components/PageThumbnailList";
 import AnalysisPanel from "@/components/AnalysisPanel";
 import WorkspaceTree from "@/components/WorkspaceTree";
@@ -991,6 +992,16 @@ export default function App() {
                                           lines={ocrLines}
                                           width={s.pageWidth}
                                           height={s.pageHeight}
+                                        />
+                                      )}
+                                      {s.tool === "eraser" && s.bytes && (
+                                        <PdfEraserLayer
+                                          bytes={s.bytes}
+                                          page={doc.currentPage}
+                                          width={s.pageWidth}
+                                          height={s.pageHeight}
+                                          busy={s.saving || s.restoring}
+                                          onErase={(ids) => void s.erasePdfElements(ids)}
                                         />
                                       )}
                                       <AnnotationLayer

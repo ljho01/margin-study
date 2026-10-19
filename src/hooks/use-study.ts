@@ -25,6 +25,7 @@ import { repairLatex } from "@/lib/latex";
 import { quoteToken, quotesAsText, quotesForAI } from "@/lib/quotes";
 import { createChatDraftStore } from "@/lib/chat-draft";
 import { DocumentSession } from "@/lib/document-session";
+import { eraseElements } from "@/lib/pdf-elements";
 import {
   pageMap,
   restoreEdit,
@@ -79,7 +80,12 @@ export function useStudy() {
     setDocState(next);
   }, []);
   const documentSession = useRef(new DocumentSession());
-  const [bytes, setBytes] = useState<ArrayBuffer | null>(null);
+  const [bytes, setBytesState] = useState<ArrayBuffer | null>(null);
+  const bytesRef = useRef(bytes);
+  const setBytes = useCallback((value: ArrayBuffer | null) => {
+    bytesRef.current = value;
+    setBytesState(value);
+  }, []);
   const [pdf, setPdfState] = useState<PDFDocumentProxy | null>(null);
   const pdfRef = useRef(pdf);
   const setPdf = useCallback((value: SetStateAction<PDFDocumentProxy | null>) => {
@@ -578,7 +584,7 @@ export function useStudy() {
   };
   const snapshot = (document: StudyDocument): EditSnapshot => ({
     document,
-    bytes: bytes!,
+    bytes: bytesRef.current!,
     pageIds: documentSession.current.ids,
   });
   const rememberEdit = () => {
@@ -596,6 +602,49 @@ export function useStudy() {
       annotations: { ...d.annotations, [d.currentPage]: items },
     }));
   };
+  /**
+   * Removes elements of the PDF itself (text runs, images, shapes and other
+   * apps' annotations) from the current page. The edited source replaces the
+   * displayed file; undo restores the previous source like a page deletion.
+   */
+  const pdfErase = useRef(Promise.resolve());
+  const erasePdfElements = (ids: string[]) => {
+    const run = pdfErase.current.then(async () => {
+      const current = docRef.current;
+      const source = bytesRef.current;
+      if (!ids.length || !current || !source || editLock.current) return;
+      editLock.current = true;
+      setRestoring(true);
+      const session = documentSession.current;
+      try {
+        const page = current.currentPage;
+        const next = await eraseElements(source, page, ids);
+        const { task, parsed } = await loadDisplay(next);
+        const previous = pdfRef.current;
+        if (previous)
+          carryThumbnails(previous, parsed,
+            new Map(current.pages.filter((p) => p !== page).map((p) => [p, p])));
+        await saveChain.current;
+        await storage.storePDF(current.id, next);
+        const pageAspect = await aspectOf(parsed, docRef.current!.currentPage);
+        if (documentSession.current !== session) {
+          await task.destroy().catch(() => {});
+          return;
+        }
+        const latest = docRef.current!;
+        setHistory((items) => [...items.slice(-99), snapshot(latest)]);
+        setFuture([]);
+        showDocument({ ...latest, dirty: true }, next, task, parsed, pageAspect, true);
+      } catch (error) {
+        notify(`PDF 요소를 지우지 못했습니다: ${err(error)}`, true);
+      } finally {
+        editLock.current = false;
+        setRestoring(false);
+      }
+    });
+    pdfErase.current = run.catch(() => {});
+    return run;
+  };
   const travelHistory = async (redo = false) => {
     const last = (redo ? future : history).at(-1);
     const current = docRef.current;
@@ -606,7 +655,7 @@ export function useStudy() {
     const session = documentSession.current;
     let replacement: Awaited<ReturnType<typeof loadDisplay>> | undefined;
     try {
-      if (last.bytes !== bytes) replacement = await loadDisplay(last.bytes);
+      if (last.bytes !== bytesRef.current) replacement = await loadDisplay(last.bytes);
       await saveChain.current;
       // The id still fingerprints the file on disk for conflict detection;
       // only the local editing source changes when crossing a save boundary.
@@ -1171,7 +1220,7 @@ export function useStudy() {
     setSaving(true);
     editLock.current = true;
     try {
-      const data = await writePdf(bytes, current);
+      const data = await writePdf(bytesRef.current!, current);
       let target = current.source;
       let expected: string | undefined = current.id;
       if (!target) {
@@ -1198,7 +1247,7 @@ export function useStudy() {
     if (!doc || !bytes || exporting) return;
     setExporting(true);
     try {
-      const data = await writePdf(bytes, doc);
+      const data = await writePdf(bytesRef.current!, docRef.current!);
       const name = doc.name.replace(/\.pdf$/i, "") + " 사본.pdf";
       if (!ai.desktop) download(data, name);
       else {
@@ -1525,6 +1574,7 @@ export function useStudy() {
     importFile,
     openStored,
     changeAnnotations,
+    erasePdfElements,
     navigate,
     runAnalysis,
     runMissingAnalyses,

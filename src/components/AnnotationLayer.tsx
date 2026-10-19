@@ -486,7 +486,9 @@ export default function AnnotationLayer({
         ref={svgRef}
         aria-label="PDF 필기 영역"
         className={`absolute inset-0 z-10 touch-none ${tool === "text" ? "cursor-text" : tool !== "select" ? "cursor-crosshair" : ""}`}
-        style={{ pointerEvents: tool === "select" ? "none" : "auto" }}
+        // With the eraser, empty page passes the pointer to the PDF eraser
+        // below; marks keep their own hit areas and are erased first.
+        style={{ pointerEvents: tool === "select" || tool === "eraser" ? "none" : "auto" }}
         width={width}
         height={height}
         viewBox={`0 0 ${width} ${height}`}
